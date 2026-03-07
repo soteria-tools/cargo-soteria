@@ -13,6 +13,11 @@ path = "src/main.rs"
 name = "soteria-cleanup"
 path = "src/cleanup.rs"
 
+[package.metadata]
+# Pre-built soteria-rust binaries are currently only available for macOS on
+# Apple Silicon (macos/aarch64). The build script enforces this at compile time.
+supported-platforms = ["aarch64-apple-darwin"]
+
 [dependencies]
 zip = "2"
 reqwest = { version = "0.12", features = ["blocking", "json"] }

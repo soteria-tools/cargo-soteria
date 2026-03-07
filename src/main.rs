@@ -168,13 +168,16 @@ fn fetch_nightly_release() -> GhRelease {
 
 /// Determine the expected asset name for the current platform.
 fn expected_asset_name() -> String {
-    let os = if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else {
-        fail("Unsupported operating system.");
-    };
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+
+    if os != "macos" || arch != "aarch64" {
+        fail(&format!(
+            "Unsupported platform: {os}/{arch}. \
+             Pre-built binaries are currently only available for macOS on Apple Silicon (macos/aarch64). \
+             See https://github.com/{REPO_OWNER}/{REPO_NAME} for updates."
+        ));
+    }
 
     format!("soteria-rust-{}.zip", os)
 }
