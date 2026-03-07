@@ -1,0 +1,22 @@
+[package]
+name = "soteria"
+version = "0.1.0"
+edition = "2021"
+description = "Cargo subcommand for running soteria-rust analysis"
+license = "Apache-2.0"
+
+[[bin]]
+name = "cargo-soteria"
+path = "src/main.rs"
+
+[[bin]]
+name = "soteria-cleanup"
+path = "src/cleanup.rs"
+
+[dependencies]
+zip = "2"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+indicatif = "0.17"
+colored = "2"
