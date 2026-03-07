@@ -518,6 +518,26 @@ fn cmd_setup(local_path: Option<&str>) {
     println!();
 }
 
+// ── unsetup command ───────────────────────────────────────────────────────────
+
+fn cmd_unsetup() {
+    let dest = package_dir();
+
+    if !dest.exists() {
+        info("Soteria is not set up.");
+        return;
+    }
+
+    fs::remove_dir_all(&dest).unwrap_or_else(|e| {
+        fail(&format!("Failed to remove '{}': {e}", dest.display()));
+    });
+
+    ok(&format!(
+        "Soteria uninstalled  (removed {}).",
+        dest.display()
+    ));
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -538,6 +558,11 @@ fn main() {
             .find(|w| w[0] == "--local")
             .map(|w| w[1].as_str());
         cmd_setup(local_path);
+        return;
+    }
+
+    if args.first().map(|s| s.as_str()) == Some("unsetup") {
+        cmd_unsetup();
         return;
     }
 
