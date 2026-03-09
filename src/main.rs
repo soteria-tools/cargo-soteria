@@ -384,6 +384,7 @@ fn install_from_local(local_path: &Path) {
     ));
 
     // Try to get git metadata for version.json
+
     let commit_sha = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(local_path)
@@ -407,12 +408,6 @@ fn install_from_local(local_path: &Path) {
         published_at,
         release_id: 0,
     });
-
-    println!();
-    ok(&format!(
-        "{}",
-        "Soteria installed successfully from local build.".bold()
-    ));
 }
 
 // ── setup command ─────────────────────────────────────────────────────────────
@@ -423,6 +418,37 @@ fn prompt_yes_no(question: &str) -> bool {
     let mut input = String::new();
     io::stdin().read_line(&mut input).ok();
     matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+fn check_toolchain() {
+    let sp = spinner("Checking that the right toolchain is installed…");
+
+    let obol = package_dir().join("bin").join("obol");
+    let output = Command::new(&obol).arg("toolchain-path").output();
+
+    sp.finish_and_clear();
+
+    match output {
+        Ok(out) if out.status.success() => {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            ok(&format!("Toolchain found at {}", path.dimmed()));
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            fail(&format!(
+                "Toolchain check failed (exit {}){}",
+                out.status.code().unwrap_or(1),
+                if stderr.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {stderr}")
+                }
+            ));
+        }
+        Err(e) => {
+            fail(&format!("Failed to run obol: {e}"));
+        }
+    }
 }
 
 fn cmd_setup(local_path: Option<&str>) {
@@ -448,6 +474,19 @@ fn cmd_setup(local_path: Option<&str>) {
         }
 
         install_from_local(local_path);
+        println!();
+        check_toolchain();
+        println!();
+        ok(&format!(
+            "{}",
+            "Soteria installed successfully from local build.".bold()
+        ));
+        println!();
+        info(&format!(
+            "Run {} to start analysing a project.",
+            "cargo soteria".cyan().bold()
+        ));
+        println!();
         return;
     }
 
@@ -508,6 +547,8 @@ fn cmd_setup(local_path: Option<&str>) {
         release_id: release.id,
     });
 
+    println!();
+    check_toolchain();
     println!();
     ok(&format!("{}", "Soteria installed successfully.".bold()));
     println!();
