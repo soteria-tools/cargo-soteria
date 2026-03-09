@@ -430,8 +430,19 @@ fn check_toolchain() {
 
     match output {
         Ok(out) if out.status.success() => {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            ok(&format!("Toolchain found at {}", path.dimmed()));
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            // obol may print installation progress before the final path;
+            // print any such lines verbatim, then use the last line as the path.
+            let mut lines = stdout.lines().filter(|l| !l.is_empty()).peekable();
+            let mut last = String::new();
+            while let Some(line) = lines.next() {
+                if lines.peek().is_some() {
+                    println!("  {}", line);
+                } else {
+                    last = line.to_string();
+                }
+            }
+            ok(&format!("Toolchain found at {}", last.dimmed()));
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
