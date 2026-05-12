@@ -66,6 +66,9 @@ fn fail(msg: &str) -> ! {
 // ── path helpers ──────────────────────────────────────────────────────────────
 
 fn soteria_base_dir() -> PathBuf {
+    if let Ok(home) = env::var("SOTERIA_HOME") {
+        return PathBuf::from(home);
+    }
     let home = env::var("HOME").expect("HOME environment variable not set");
     PathBuf::from(home).join(".soteria")
 }
