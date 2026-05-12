@@ -25,3 +25,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Run online integration test
         run: cargo test --test integration online_install_and_run -- --nocapture
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
