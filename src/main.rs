@@ -138,7 +138,11 @@ fn fetch_nightly_release() -> GhRelease {
         .build()
         .expect("Failed to build HTTP client");
 
-    let resp = client.get(&url).send().unwrap_or_else(|e| {
+    let mut req = client.get(&url);
+    if let Ok(token) = env::var("GITHUB_TOKEN") {
+        req = req.bearer_auth(token);
+    }
+    let resp = req.send().unwrap_or_else(|e| {
         sp.finish_and_clear();
         fail(&format!("Failed to reach GitHub API: {e}"));
     });
