@@ -178,15 +178,16 @@ fn expected_asset_name() -> String {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
 
-    if os != "macos" || arch != "aarch64" {
-        fail(&format!(
+    match (os, arch) {
+        ("macos", "aarch64") => "soteria-rust-macos-arm64.zip".to_string(),
+        ("linux", "x86_64") => "soteria-rust-linux-x86_64.zip".to_string(),
+        _ => fail(&format!(
             "Unsupported platform: {os}/{arch}. \
-             Pre-built binaries are currently only available for macOS on Apple Silicon (macos/aarch64). \
+             Pre-built binaries are available for macOS ARM64 (aarch64-apple-darwin) \
+             and Linux x86_64 (x86_64-unknown-linux-gnu). \
              See https://github.com/{REPO_OWNER}/{REPO_NAME} for updates."
-        ));
+        )),
     }
-
-    format!("soteria-rust-{}.zip", os)
 }
 
 /// Download `url` with a live progress bar. Returns the raw bytes.
