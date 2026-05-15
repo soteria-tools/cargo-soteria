@@ -428,8 +428,6 @@ fn prompt_yes_no(question: &str) -> bool {
     matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-/// Build a `Command` for the installed `soteria-rust`, with the runtime
-/// environment (dylib search path + bundled tool paths) configured.
 fn soteria_rust_command() -> Command {
     let pkg = package_dir();
     let bin_dir = pkg.join("bin");
@@ -461,29 +459,18 @@ fn soteria_rust_command() -> Command {
 /// the compilation cost. Without this, `soteria-rust` builds the plugins
 /// lazily on first `exec`.
 fn build_plugins() {
-    let sp = spinner("Building plugins…");
-    let output = soteria_rust_command().arg("build-plugins").output();
-    sp.finish_and_clear();
+    // A full plugin-crate compile: stream cargo's output instead of buffering
+    // it behind a spinner, since it can run for minutes on a cold cache.
+    info("Building plugins…");
+    let status = soteria_rust_command().arg("build-plugins").status();
 
-    match output {
-        Ok(out) if out.status.success() => {
-            ok("Plugins built.");
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            fail(&format!(
-                "Building plugins failed (exit {}){}",
-                out.status.code().unwrap_or(1),
-                if stderr.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {stderr}")
-                }
-            ));
-        }
-        Err(e) => {
-            fail(&format!("Failed to run soteria-rust: {e}"));
-        }
+    match status {
+        Ok(s) if s.success() => ok("Plugins built."),
+        Ok(s) => fail(&format!(
+            "Building plugins failed (exit {})",
+            s.code().unwrap_or(1)
+        )),
+        Err(e) => fail(&format!("Failed to run soteria-rust to build plugins: {e}")),
     }
 }
 
