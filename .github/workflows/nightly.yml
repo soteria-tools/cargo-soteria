@@ -1,0 +1,126 @@
+name: Nightly image
+
+# Rebuilds the Docker image daily and republishes ghcr.io/<repo>:nightly.
+#
+# The image bakes in `cargo-soteria setup`, which downloads that day's
+# soteria-rust bundle from the soteria nightly GitHub release (published at
+# 02:00 UTC). We run at 03:00 UTC so the fresh bundle is available.
+#
+# `:nightly` is a moving tag (repointed every run). Each run also publishes an
+# immutable `:YYYY-MM-DD` tag so a regression can be pinned/rolled back to.
+#
+# Two independent jobs run in parallel every night:
+#   - publish: build, smoke test, push :nightly + :YYYY-MM-DD
+#   - prune:   delete versions older than 7 days
+# They don't depend on each other: `:nightly` and recent dated tags are
+# protected from pruning regardless of which job finishes first.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: nightly-image
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, smoke test & publish nightly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build once, load locally, and smoke test before anything is pushed so a
+      # broken soteria nightly never gets published as :nightly.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: cargo-soteria:nightly-candidate
+          # No provenance attestation: it would create untagged child
+          # manifests, and the prune action is not referrer-aware (see prune
+          # job). The image is single-platform, so provenance buys nothing.
+          provenance: false
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/tests/fixtures/simple-crate:/workspace" \
+            cargo-soteria:nightly-candidate
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # type=raw (not type=schedule) so a manual workflow_dispatch run
+          # produces the same :YYYY-MM-DD tag as the nightly schedule does.
+          tags: |
+            type=raw,value=nightly
+            type=raw,value={{date 'YYYY-MM-DD'}}
+
+      # Re-runs from the gha cache, so this is fast and produces the exact image
+      # that passed the smoke test above.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Keep in sync with the candidate build above: no provenance child
+          # manifests for the (non-referrer-aware) prune job to corrupt.
+          provenance: false
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  prune:
+    name: Prune versions older than 7 days
+    runs-on: ubuntu-latest
+    # No `needs:` — runs in parallel with publish. Order is safe because the
+    # publish job repoints :nightly every run, so with timestamp-to-use defaulting
+    # to updated_at, :nightly's age resets to ~0 each night and never reaches the
+    # 7d cut-off (as long as this workflow runs at least weekly). Today's dated
+    # tag is likewise < 7 days old, so it never matches the cut-off either.
+    steps:
+      # `tag-selection: both` ages out dated
+      # :YYYY-MM-DD tags after 7 days (rolling rollback window) and also
+      # clears untagged orphans.
+      #
+      # The action is NOT manifest-list/referrer aware (README: naive deletion
+      # "can break your images"); it won't spare attestation child manifests of
+      # kept images on its own. We sidestep this entirely by building with
+      # provenance:false (see publish job) on a single-platform image, so no
+      # child manifests exist for prune to corrupt.
+      - name: Prune versions older than 7 days
+        uses: snok/container-retention-policy@v3.0.1
+        with:
+          account: ${{ github.repository_owner }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: cargo-soteria
+          cut-off: 7d
+          tag-selection: both
+          image-tags: "!nightly"
