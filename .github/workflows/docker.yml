@@ -1,0 +1,40 @@
+name: Docker
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# CI only: builds the image and smoke-tests it on every push/PR to master.
+# Publishing is handled entirely by nightly.yml (ghcr.io/<repo>:nightly).
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: cargo-soteria:ci
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/tests/fixtures/simple-crate:/workspace" \
+            cargo-soteria:ci
