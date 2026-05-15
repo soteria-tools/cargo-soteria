@@ -11,7 +11,7 @@ name: Nightly image
 #
 # Two independent jobs run in parallel every night:
 #   - publish: build, smoke test, push :nightly + :YYYY-MM-DD
-#   - prune:   delete versions older than 5 days
+#   - prune:   delete versions older than 7 days
 # They don't depend on each other: `:nightly` and recent dated tags are
 # protected from pruning regardless of which job finishes first.
 
@@ -47,6 +47,10 @@ jobs:
           push: false
           load: true
           tags: cargo-soteria:nightly-candidate
+          # No provenance attestation: it would create untagged child
+          # manifests, and the prune action is not referrer-aware (see prune
+          # job). The image is single-platform, so provenance buys nothing.
+          provenance: false
           secrets: |
             github_token=${{ secrets.GITHUB_TOKEN }}
           cache-from: type=gha
@@ -70,9 +74,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          # type=raw (not type=schedule) so a manual workflow_dispatch run
+          # produces the same :YYYY-MM-DD tag as the nightly schedule does.
           tags: |
             type=raw,value=nightly
-            type=schedule,pattern={{date 'YYYY-MM-DD'}}
+            type=raw,value={{date 'YYYY-MM-DD'}}
 
       # Re-runs from the gha cache, so this is fast and produces the exact image
       # that passed the smoke test above.
@@ -83,27 +89,33 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Keep in sync with the candidate build above: no provenance child
+          # manifests for the (non-referrer-aware) prune job to corrupt.
+          provenance: false
           secrets: |
             github_token=${{ secrets.GITHUB_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   prune:
-    name: Prune versions older than 5 days
+    name: Prune versions older than 7 days
     runs-on: ubuntu-latest
-    # No `needs:` — runs in parallel with publish. Safe in any order:
-    # `:nightly` is protected by skip-tags (so is its provenance child), and
-    # today's dated tag is < 5 days old so it never matches the cut-off.
+    # No `needs:` — runs in parallel with publish. Order is safe because the
+    # publish job repoints :nightly every run, so with timestamp-to-use defaulting
+    # to updated_at, :nightly's age resets to ~0 each night and never reaches the
+    # 7d cut-off (as long as this workflow runs at least weekly). Today's dated
+    # tag is likewise < 7 days old, so it never matches the cut-off either.
     steps:
-      # The provenance attestations attached by the publish job are untagged
-      # child manifests of live tags, so a naive prune would corrupt tagged
-      # images. snok/container-retention-policy@v3 is manifest-list/referrer
-      # aware: it never deletes a child manifest of a kept image, and deletes
-      # an image's attestation child together with the image. `skip-tags`
-      # keeps :nightly (and its children) regardless of age; `tag-selection:
-      # both` also removes dated :YYYY-MM-DD tags once they age out, giving a
-      # rolling 5-day rollback window. Untagged orphans are removed too.
-      - name: Prune versions older than 5 days
+      # `tag-selection: both` ages out dated
+      # :YYYY-MM-DD tags after 7 days (rolling rollback window) and also
+      # clears untagged orphans.
+      #
+      # The action is NOT manifest-list/referrer aware (README: naive deletion
+      # "can break your images"); it won't spare attestation child manifests of
+      # kept images on its own. We sidestep this entirely by building with
+      # provenance:false (see publish job) on a single-platform image, so no
+      # child manifests exist for prune to corrupt.
+      - name: Prune versions older than 7 days
         uses: snok/container-retention-policy@v3.0.1
         with:
           account: ${{ github.repository_owner }}

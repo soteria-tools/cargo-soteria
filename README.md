@@ -91,6 +91,39 @@ PC 1: (V|1| <u 0x000003e8) /\ (V|2| <u 0x000003e8)
 PC 2: ...
 ```
 
+## Docker
+
+A pre-built image is published to GitHub Container Registry with soteria-rust
+already baked in — no `cargo install`, no `setup` step:
+
+```bash
+docker run --rm -v "$PWD:/workspace" \
+  ghcr.io/soteria-tools/cargo-soteria:nightly --kani
+```
+
+The crate in the current directory is mounted at `/workspace` (the image's
+working directory). Any arguments after the image name are forwarded to
+soteria-rust, exactly like `cargo soteria <args>`.
+
+**Tags:**
+
+- `:nightly` — moving tag, rebuilt daily with that day's soteria-rust nightly.
+- `:YYYY-MM-DD` — immutable per-day tag, for pinning or rolling back. A rolling
+  ~7-day window of dated tags is retained.
+
+**Runs as a non-root user.** The container runs as the unprivileged `soteria`
+user, so build artifacts written into your mounted directory (`target/`,
+`Cargo.lock`, `*.llbc.json`, …) are **not** owned by root. If you need them
+owned by your host user specifically, pass your UID/GID:
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/workspace" \
+  ghcr.io/soteria-tools/cargo-soteria:nightly --kani
+```
+
+**Platform:** the image is `linux/amd64` only. On Apple Silicon / other hosts
+it runs under emulation (Docker pulls the amd64 image automatically).
+
 ## Architecture Support
 
 Currently supported platforms:
