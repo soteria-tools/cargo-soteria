@@ -14,7 +14,7 @@ FROM --platform=linux/amd64 ubuntu:24.04
 # additionally pulls g++, make and dpkg-dev (~200 MB) that soteria never uses.
 RUN apt-get update && apt-get install -y \
     curl ca-certificates gcc git \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Install all baked state under shared, world-readable locations instead of
 # /root. The container runs as a non-root user (see below); /root is mode 700
@@ -39,7 +39,10 @@ RUN rustup set profile minimal
 
 COPY --from=builder /usr/local/cargo/bin/cargo-soteria /usr/local/bin/cargo-soteria
 
-# Pre-bake the soteria-rust nightly into the image so users never need to run setup.
+# Pre-bake the soteria-rust nightly into the image so users never need to run
+# setup. `setup` also runs `build-plugins`, so the plugin crate is compiled
+# here at image-build time and analysis starts fast on first `docker run`
+# (rather than paying a few seconds of compile on the first invocation).
 # GITHUB_TOKEN is mounted as a secret (never baked into the image) and is optional —
 # only needed in CI to avoid GitHub API rate-limiting.
 #
@@ -50,14 +53,14 @@ COPY --from=builder /usr/local/cargo/bin/cargo-soteria /usr/local/bin/cargo-sote
 RUN --mount=type=secret,id=github_token,required=false \
     TOKEN=$(cat /run/secrets/github_token 2>/dev/null || true) && \
     if [ -n "$TOKEN" ]; then \
-        GITHUB_TOKEN="$TOKEN" cargo-soteria setup; \
+    GITHUB_TOKEN="$TOKEN" cargo-soteria setup; \
     else \
-        cargo-soteria setup; \
+    cargo-soteria setup; \
     fi && \
     NIGHTLY="$(rustup toolchain list | sed 's/ (.*)//' | grep '^nightly' | head -n1)" && \
     rustup default "$NIGHTLY" && \
     rustup toolchain list | sed 's/ (.*)//' | grep -v '^nightly' \
-        | xargs -r -n1 rustup toolchain uninstall && \
+    | xargs -r -n1 rustup toolchain uninstall && \
     rustup toolchain list
 
 # Run as an unprivileged user so build artifacts written into a bind-mounted
@@ -65,15 +68,16 @@ RUN --mount=type=secret,id=github_token,required=false \
 # UID can still override with `docker run --user $(id -u):$(id -g)`.)
 #
 # Permissions on the baked state — all must be writable for any UID:
-#   - /opt/soteria: soteria-rust compiles its plugin crate on first run,
-#     writing Cargo.lock and target/ under plugins/, so this is NOT read-only.
+#   - /opt/soteria: the plugin crates are pre-built during `setup` above, but
+#     soteria-rust may still touch/rebuild each plugins/<name>/{Cargo.lock,
+#     target/} at run time, so this is NOT read-only.
 #   - rustup/cargo: obol may invoke rustup/cargo at run time and cargo writes
 #     its registry/git cache under CARGO_HOME.
 # This is a single-purpose container, so world-writable baked dirs are an
 # acceptable trade-off (same as the official rust image's `chmod -R a+w`).
 RUN useradd --create-home --shell /bin/bash soteria \
- && chmod -R a+rwX /opt/soteria /usr/local/rustup /usr/local/cargo \
- && mkdir -p /workspace && chown soteria:soteria /workspace
+    && chmod -R a+rwX /opt/soteria /usr/local/rustup /usr/local/cargo \
+    && mkdir -p /workspace && chown soteria:soteria /workspace
 
 ENV HOME=/home/soteria
 USER soteria
