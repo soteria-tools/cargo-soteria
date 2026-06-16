@@ -33,18 +33,18 @@ Run soteria analysis on your crate:
 
 ```bash
 cd your-rust-project/
-cargo soteria --kani
+cargo soteria
 ```
 
 `cargo soteria` discovers every symbolic test in the crate and analyses them in
 **parallel** — one `soteria-rust` process per test — streaming each result as it
-finishes. All other arguments (e.g. `--kani`) are forwarded to the workers.
+finishes. All other arguments are forwarded to the workers.
 
 Use `-j`/`--jobs` to control how many tests run at once (default: a quarter of
 the available CPUs), and press Ctrl-C to stop — every running analysis is killed:
 
 ```bash
-cargo soteria -j 8 --kani
+cargo soteria -j 8
 ```
 
 ### Common Options
@@ -128,7 +128,7 @@ owned by your host user specifically, pass your UID/GID:
 
 ```bash
 docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/workspace" \
-  ghcr.io/soteria-tools/cargo-soteria:nightly --kani
+  ghcr.io/soteria-tools/cargo-soteria:nightly
 ```
 
 **Platform:** the image is `linux/amd64` only. On Apple Silicon / other hosts
