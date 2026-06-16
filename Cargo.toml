@@ -1,13 +1,19 @@
 [package]
 name = "soteria"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Cargo subcommand for running soteria-rust analysis"
 license = "Apache-2.0"
 repository = "https://github.com/soteria-tools/cargo-soteria"
 homepage = "https://soteria-tools.com"
 readme = "README.md"
-keywords = ["soteria", "symbolic-execution", "verification", "cargo-subcommand", "testing"]
+keywords = [
+  "soteria",
+  "symbolic-execution",
+  "verification",
+  "cargo-subcommand",
+  "testing",
+]
 categories = ["development-tools::testing", "command-line-utilities"]
 
 [[bin]]
@@ -31,6 +37,6 @@ serde_json = "1"
 indicatif = "0.17"
 colored = "2"
 # Parallel test runner:
-ctrlc = "3"        # install a Ctrl-C handler to tear down running workers
-libc = "0.2"       # killpg(2) to SIGKILL each worker's process group
-tempfile = "3"     # per-test merged stdout/stderr capture files
+ctrlc = "3"    # install a Ctrl-C handler to tear down running workers
+libc = "0.2"   # killpg(2) to SIGKILL each worker's process group
+tempfile = "3" # per-test merged stdout/stderr capture files
