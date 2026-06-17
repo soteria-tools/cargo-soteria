@@ -38,3 +38,9 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}/tests/fixtures/simple-crate:/workspace" \
             cargo-soteria:ci
+
+      - name: Run many-slow-tests (parallel runner)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/tests/fixtures/many-slow-tests:/workspace" \
+            cargo-soteria:ci
