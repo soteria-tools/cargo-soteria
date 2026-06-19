@@ -40,6 +40,14 @@ pub fn run(args: &[String]) -> ! {
     ensure_installed();
     ensure_nextest();
 
+    // Split at the first `--`, mirroring `cargo test -- <args>`: everything
+    // before it is forwarded to `cargo nextest`; everything after is forwarded
+    // verbatim to *every* soteria-rust call (the list-phase compile *and* each
+    // per-test exec). So `cargo soteria nextest run -- --kani` lists and runs
+    // the crate's Kani harnesses under nextest. nextest controls the runner's
+    // argv, so we hand these flags to the runner out-of-band via an env var.
+    let (nextest_args, soteria_args) = split_soteria_args(args);
+
     let triple = host_triple();
     let exe = current_exe();
 
@@ -53,23 +61,56 @@ pub fn run(args: &[String]) -> ! {
 
     let mut cmd = Command::new("cargo");
     cmd.arg("nextest");
-    cmd.args(args);
+    cmd.args(&nextest_args);
     // Scope to the lib unit-test target unless the user already selected
     // targets: every probed test binary returns the *same* full soteria list,
     // so without this a crate with extra test targets would list each test
     // several times. The lib unit-test binary is the single hook we need.
-    if !selects_targets(args) {
+    if !selects_targets(&nextest_args) {
         cmd.arg("--lib");
     }
     // A target runner only fires for an explicit, non-host `--target`, so force
     // the host triple (exactly as cargo-miri does).
     cmd.arg("--target").arg(&triple);
     cmd.arg("--config").arg(&runner_cfg);
+    // Pass the post-`--` soteria-rust flags down to the runner. cargo nextest
+    // inherits this env and hands it to the target-runner children it spawns
+    // (both list and run phases), where `extra_soteria_args()` reads it back.
+    if !soteria_args.is_empty() {
+        cmd.env(EXTRA_ARGS_ENV, encode_extra_args(&soteria_args));
+    }
 
     match cmd.status() {
         Ok(st) => std::process::exit(st.code().unwrap_or(1)),
         Err(e) => fail(&format!("Failed to run `cargo nextest`: {e}")),
     }
+}
+
+/// Split `cargo soteria nextest` args at the first `--`: `(before, after)`.
+/// `before` goes to `cargo nextest`; `after` is the soteria-rust flag bag
+/// (empty when there's no `--`).
+fn split_soteria_args(args: &[String]) -> (Vec<String>, Vec<String>) {
+    match args.iter().position(|a| a == "--") {
+        Some(i) => (args[..i].to_vec(), args[i + 1..].to_vec()),
+        None => (args.to_vec(), Vec::new()),
+    }
+}
+
+/// Env var carrying the post-`--` soteria-rust flags from the `nextest` wrapper
+/// down to the target-runner subprocess (JSON-encoded `Vec<String>`).
+const EXTRA_ARGS_ENV: &str = "__SOTERIA_NEXTEST_EXTRA_ARGS";
+
+fn encode_extra_args(extra: &[String]) -> String {
+    serde_json::to_string(extra).unwrap_or_default()
+}
+
+/// The soteria-rust flags the wrapper stashed in [`EXTRA_ARGS_ENV`], to be
+/// forwarded to every soteria-rust invocation the runner makes.
+fn extra_soteria_args() -> Vec<String> {
+    std::env::var(EXTRA_ARGS_ENV)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 /// True if the user already passed a cargo target-selection flag, in which case
@@ -126,8 +167,11 @@ fn list_phase(proto: &[String]) -> ! {
     }
 
     // Inherit stderr so the (one-time) compile progress streams as debug output;
-    // our stdout must carry only the `name: test` lines.
-    let tests = runner_common::discover_tests(&[], true).unwrap_or_else(|e| fail(&e.message()));
+    // our stdout must carry only the `name: test` lines. The compile must use
+    // the same soteria flags as the per-test execs (e.g. `--kani`), so the
+    // listed entry points match what the run phase will analyse.
+    let tests = runner_common::discover_tests(&extra_soteria_args(), true)
+        .unwrap_or_else(|e| fail(&e.message()));
 
     let mut out = String::new();
     for t in &tests {
@@ -153,6 +197,7 @@ fn run_phase(proto: &[String]) -> ! {
         .arg(".")
         .arg("--no-compile")
         .arg("--no-compile-plugins")
+        .args(extra_soteria_args())
         .arg("--filter")
         .arg(anchored_filter(name))
         .stdin(Stdio::null())
@@ -269,6 +314,49 @@ mod tests {
         let vv = "rustc 1.79.0\nbinary: rustc\nhost: aarch64-apple-darwin\nrelease: 1.79.0\n";
         assert_eq!(parse_host_triple(vv).unwrap(), "aarch64-apple-darwin");
         assert!(parse_host_triple("no host here").is_none());
+    }
+
+    #[test]
+    fn splits_soteria_args_at_dashdash() {
+        let split = |a: &[&str]| {
+            let owned: Vec<String> = a.iter().map(|s| s.to_string()).collect();
+            split_soteria_args(&owned)
+        };
+        // No `--`: everything is a nextest arg.
+        assert_eq!(
+            split(&["run", "mytest"]),
+            (vec!["run".into(), "mytest".into()], vec![])
+        );
+        // `--` separates nextest args from the soteria-rust flag bag.
+        assert_eq!(
+            split(&["run", "--", "--kani"]),
+            (vec!["run".into()], vec!["--kani".into()])
+        );
+        // A trailing `--` yields an empty (but present) soteria bag.
+        assert_eq!(split(&["run", "--"]), (vec!["run".into()], vec![]));
+        // Only the first `--` splits; later ones stay in the soteria bag.
+        assert_eq!(
+            split(&["run", "--", "--kani", "--", "x"]),
+            (
+                vec!["run".into()],
+                vec!["--kani".into(), "--".into(), "x".into()]
+            )
+        );
+    }
+
+    #[test]
+    fn extra_args_roundtrip_through_env() {
+        let extra = vec![
+            "--kani".to_string(),
+            "--filter".to_string(),
+            "f".to_string(),
+        ];
+        let encoded = encode_extra_args(&extra);
+        // SAFETY: single-threaded test; we set and immediately read back.
+        unsafe { std::env::set_var(EXTRA_ARGS_ENV, &encoded) };
+        assert_eq!(extra_soteria_args(), extra);
+        unsafe { std::env::remove_var(EXTRA_ARGS_ENV) };
+        assert!(extra_soteria_args().is_empty());
     }
 
     #[test]

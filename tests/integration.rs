@@ -398,6 +398,63 @@ fn nextest_runner_propagates_exit_codes() {
     fs::remove_dir_all(&home).ok();
 }
 
+/// Flags placed after `--` (e.g. `cargo soteria nextest run -- --kani`) must
+/// reach *both* phases of the runner: the list-phase `compile` (so the right
+/// entry points are discovered) and each `exec` (so they're analysed the same
+/// way). `nextest::run` stashes them in `__SOTERIA_NEXTEST_EXTRA_ARGS`; here we
+/// set that env directly and check the `--kani`-aware fake reacts in both
+/// phases.
+#[test]
+fn nextest_runner_threads_post_dashdash_flags() {
+    let home = fresh_soteria_home();
+    install_fake_soteria(&home);
+
+    // JSON encoding of ["--kani"], matching `nextest::encode_extra_args`. The
+    // env var name mirrors `nextest::EXTRA_ARGS_ENV`.
+    let extra_env = ("__SOTERIA_NEXTEST_EXTRA_ARGS", r#"["--kani"]"#);
+
+    // List phase: `--kani` reached `compile`, so the fake lists kani harnesses.
+    let out = Command::new(cargo_soteria_bin())
+        .args(["__nextest-runner", "/dummy", "--list", "--format", "terse"])
+        .current_dir(fixture_dir())
+        .env("SOTERIA_HOME", &home)
+        .env(extra_env.0, extra_env.1)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run list phase");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "list phase failed:\n{stdout}");
+    assert_eq!(
+        stdout.lines().collect::<Vec<_>>(),
+        vec!["kani::harness_a: test", "kani::harness_b: test"],
+        "list phase didn't forward --kani to compile:\n{stdout}"
+    );
+
+    // Run phase: `--kani` reached `exec` too (the fake prefixes a `[kani]` line).
+    let out = Command::new(cargo_soteria_bin())
+        .args([
+            "__nextest-runner",
+            "/dummy",
+            "kani::harness_a",
+            "--exact",
+            "--nocapture",
+        ])
+        .current_dir(fixture_dir())
+        .env("SOTERIA_HOME", &home)
+        .env(extra_env.0, extra_env.1)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run run phase");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "run phase failed:\n{stdout}");
+    assert!(
+        stdout.contains("[kani] kani::harness_a"),
+        "run phase didn't forward --kani to exec:\n{stdout}"
+    );
+
+    fs::remove_dir_all(&home).ok();
+}
+
 /// Ctrl-C while tests are running must terminate promptly and leave no worker
 /// processes alive.
 #[test]

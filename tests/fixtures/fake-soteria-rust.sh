@@ -10,15 +10,22 @@
 #                               running; "slow" sleeps so a test can interrupt).
 #
 # The test list can be overridden via $FAKE_TEST_LIST.
+#
+# It is also `--kani`-aware (mirroring the real tool's mode flags): when invoked
+# with `--kani`, `compile` lists kani harnesses instead, and `exec` prepends a
+# `[kani]` marker — so a test can assert a forwarded flag reached both phases.
 
 sub="$1"
 shift
 
-# Recover the test name from the anchored `--filter ^name$` argument.
+# Recover the test name from the anchored `--filter ^name$` argument, and note
+# whether a `--kani` mode flag was forwarded to us.
 filter=""
 prev=""
+has_kani=0
 for a in "$@"; do
     [ "$prev" = "--filter" ] && filter="$a"
+    [ "$a" = "--kani" ] && has_kani=1
     prev="$a"
 done
 name=$(printf '%s' "$filter" | tr -d '^$\\')
@@ -37,11 +44,14 @@ case "$sub" in
         echo "Compiling... done" >&2
         if [ -n "$FAKE_TEST_LIST" ]; then
             printf '%s\n' "$FAKE_TEST_LIST"
+        elif [ "$has_kani" = 1 ]; then
+            printf '%s\n' '["kani::harness_a","kani::harness_b"]'
         else
             printf '%s\n' '["m::pass_one","m::pass_two","m::fail_one","m::crash_one","m::charon_one","m::anomaly_one"]'
         fi
         ;;
     exec)
+        [ "$has_kani" = 1 ] && echo "[kani] $name"
         case "$name" in
             *anomaly*) exit 0 ;;                                   # exit 0 but nothing ran
             *pass*)   echo "=> Running $name..."; echo "note: ok"; exit 0 ;;
