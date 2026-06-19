@@ -12,65 +12,65 @@ mod verification {
     #[soteria::test]
     fn not_not_bool_is_identity() {
         let b: bool = soteria::nondet_bytes();
-        soteria::assert(!!b == b, "!!b == b");
+        assert!(!!b == b, "!!b == b");
     }
 
     #[soteria::test]
     fn not_not_u8_is_identity() {
         let x: u8 = soteria::nondet_bytes();
-        soteria::assert(!!x == x, "bitwise !!x == x");
+        assert!(!!x == x, "bitwise !!x == x");
     }
 
     #[soteria::test]
     fn xor_self_is_zero() {
         let x: u32 = soteria::nondet_bytes();
-        soteria::assert(x ^ x == 0, "x ^ x == 0");
+        assert!(x ^ x == 0, "x ^ x == 0");
     }
 
     #[soteria::test]
     fn and_self_is_idempotent() {
         let x: u32 = soteria::nondet_bytes();
-        soteria::assert(x & x == x, "x & x == x");
+        assert!(x & x == x, "x & x == x");
     }
 
     #[soteria::test]
     fn or_self_is_idempotent() {
         let x: u32 = soteria::nondet_bytes();
-        soteria::assert(x | x == x, "x | x == x");
+        assert!(x | x == x, "x | x == x");
     }
 
     #[soteria::test]
     fn wrapping_add_is_commutative() {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
-        soteria::assert(a.wrapping_add(b) == b.wrapping_add(a), "a + b == b + a");
+        assert!(a.wrapping_add(b) == b.wrapping_add(a), "a + b == b + a");
     }
 
     #[soteria::test]
     fn wrapping_mul_is_commutative() {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
-        soteria::assert(a.wrapping_mul(b) == b.wrapping_mul(a), "a * b == b * a");
+        assert!(a.wrapping_mul(b) == b.wrapping_mul(a), "a * b == b * a");
     }
 
     #[soteria::test]
     fn add_zero_is_identity() {
         let a: u32 = soteria::nondet_bytes();
-        soteria::assert(a.wrapping_add(0) == a, "a + 0 == a");
+        assert!(a.wrapping_add(0) == a, "a + 0 == a");
     }
 
     #[soteria::test]
     fn or_is_at_least_operand() {
         let a: u8 = soteria::nondet_bytes();
         let b: u8 = soteria::nondet_bytes();
-        soteria::assert(a | b >= a, "a | b >= a");
+        assert!(a | b >= a, "a | b >= a");
     }
 
     #[soteria::test]
     fn and_is_at_most_operand() {
         let a: u8 = soteria::nondet_bytes();
         let b: u8 = soteria::nondet_bytes();
-        soteria::assert(a & b <= a, "a & b <= a");
+        assert!(a & b <= a, "a & b <= a");
     }
 
     #[soteria::test]
@@ -78,7 +78,7 @@ mod verification {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
         let m = a.min(b);
-        soteria::assert(m <= a && m <= b, "min(a,b) <= a and <= b");
+        assert!(m <= a && m <= b, "min(a,b) <= a and <= b");
     }
 
     #[soteria::test]
@@ -86,67 +86,67 @@ mod verification {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
         let m = a.max(b);
-        soteria::assert(m >= a && m >= b, "max(a,b) >= a and >= b");
+        assert!(m >= a && m >= b, "max(a,b) >= a and >= b");
     }
 
     #[soteria::test]
     fn min_is_commutative() {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
-        soteria::assert(a.min(b) == b.min(a), "min(a,b) == min(b,a)");
+        assert!(a.min(b) == b.min(a), "min(a,b) == min(b,a)");
     }
 
     #[soteria::test]
     fn abs_diff_is_symmetric() {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
-        soteria::assert(a.abs_diff(b) == b.abs_diff(a), "abs_diff symmetric");
+        assert!(a.abs_diff(b) == b.abs_diff(a), "abs_diff symmetric");
     }
 
     #[soteria::test]
     fn abs_diff_self_is_zero() {
         let a: u32 = soteria::nondet_bytes();
-        soteria::assert(a.abs_diff(a) == 0, "abs_diff(a,a) == 0");
+        assert!(a.abs_diff(a) == 0, "abs_diff(a,a) == 0");
     }
 
     #[soteria::test]
     fn shift_left_one_is_double() {
         let a: u8 = soteria::nondet_bytes();
-        soteria::assert(a.wrapping_shl(1) == a.wrapping_mul(2), "a << 1 == a * 2");
+        assert!(a.wrapping_shl(1) == a.wrapping_mul(2), "a << 1 == a * 2");
     }
 
     #[soteria::test]
     fn saturating_add_is_at_least_operand() {
         let a: u8 = soteria::nondet_bytes();
         let b: u8 = soteria::nondet_bytes();
-        soteria::assert(a.saturating_add(b) >= a, "sat_add(a,b) >= a");
+        assert!(a.saturating_add(b) >= a, "sat_add(a,b) >= a");
     }
 
     #[soteria::test]
     fn saturating_sub_is_at_most_operand() {
         let a: u8 = soteria::nondet_bytes();
         let b: u8 = soteria::nondet_bytes();
-        soteria::assert(a.saturating_sub(b) <= a, "sat_sub(a,b) <= a");
+        assert!(a.saturating_sub(b) <= a, "sat_sub(a,b) <= a");
     }
 
     #[soteria::test]
     fn clamp_stays_in_range() {
         let x: i32 = soteria::nondet_bytes();
         let c = x.clamp(0, 100);
-        soteria::assert(c >= 0 && c <= 100, "clamp result in [0,100]");
+        assert!(c >= 0 && c <= 100, "clamp result in [0,100]");
     }
 
     #[soteria::test]
     fn count_ones_within_width() {
         let x: u8 = soteria::nondet_bytes();
-        soteria::assert(x.count_ones() <= 8, "u8 has at most 8 set bits");
+        assert!(x.count_ones() <= 8, "u8 has at most 8 set bits");
     }
 
     #[soteria::test]
     fn assume_narrows_range() {
         let x: u32 = soteria::nondet_bytes();
         soteria::assume(x < 10);
-        soteria::assert(x < 100, "x < 10 implies x < 100");
+        assert!(x < 100, "x < 10 implies x < 100");
     }
 
     // ── should FAIL: false properties ───────────────────────────────────────
@@ -156,21 +156,21 @@ mod verification {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
         // False whenever b != 0.
-        soteria::assert(a.wrapping_add(b) == a, "WRONG: a + b == a");
+        assert!(a.wrapping_add(b) == a, "WRONG: a + b == a");
     }
 
     #[soteria::test]
     fn successor_is_always_greater() {
         let a: u8 = soteria::nondet_bytes();
         // False at a == 255 (wraps to 0).
-        soteria::assert(a.wrapping_add(1) > a, "WRONG: a + 1 > a");
+        assert!(a.wrapping_add(1) > a, "WRONG: a + 1 > a");
     }
 
     #[soteria::test]
     fn double_equals_self() {
         let a: u32 = soteria::nondet_bytes();
         // False whenever a != 0.
-        soteria::assert(a.wrapping_mul(2) == a, "WRONG: 2a == a");
+        assert!(a.wrapping_mul(2) == a, "WRONG: 2a == a");
     }
 
     #[soteria::test]
@@ -178,14 +178,14 @@ mod verification {
         let a: u32 = soteria::nondet_bytes();
         let b: u32 = soteria::nondet_bytes();
         // False whenever b < a.
-        soteria::assert(a.min(b) == a, "WRONG: min(a,b) == a");
+        assert!(a.min(b) == a, "WRONG: min(a,b) == a");
     }
 
     #[soteria::test]
     fn half_then_double_is_identity() {
         let a: u8 = soteria::nondet_bytes();
         // False for odd a (integer division truncates).
-        soteria::assert((a / 2).wrapping_mul(2) == a, "WRONG: (a/2)*2 == a");
+        assert!((a / 2).wrapping_mul(2) == a, "WRONG: (a/2)*2 == a");
     }
 
     #[soteria::test]
@@ -193,7 +193,7 @@ mod verification {
         let a: u8 = soteria::nondet_bytes();
         let b: u8 = soteria::nondet_bytes();
         // False whenever a != b.
-        soteria::assert(a ^ b == 0, "WRONG: a ^ b == 0");
+        assert!(a ^ b == 0, "WRONG: a ^ b == 0");
     }
 
     #[soteria::test]
@@ -209,7 +209,7 @@ mod verification {
         let arr = [10u8, 20, 30, 40];
         let i: usize = soteria::nondet_bytes();
         // Real bug: out-of-bounds read when i >= 4.
-        soteria::assert(arr[i] < 100, "in-bounds element is small");
+        assert!(arr[i] < 100, "in-bounds element is small");
     }
 
     // ── slow: many symbolic branches (widens the Ctrl-C window) ──────────────
@@ -225,6 +225,6 @@ mod verification {
             i = i.wrapping_add(1);
         }
         // Always true: the loop runs exactly until i reaches n.
-        soteria::assert(i == n, "loop terminates with i == n");
+        assert!(i == n, "loop terminates with i == n");
     }
 }

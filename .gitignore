@@ -3,5 +3,6 @@ scripts/__pycache__/
 tests/fixtures/simple-crate/target
 tests/fixtures/many-tests/target
 tests/fixtures/many-slow-tests/target
+tests/fixtures/kani-example/target
 *.llbc.json
 *.ullbc
