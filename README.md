@@ -55,6 +55,16 @@ cargo soteria -j 8
 
 See `cargo soteria --help` for all available options.
 
+### Nextest
+
+If you have [nextest](https://nexte.st) installed, Soteria provides a nextest adapter
+```
+cargo soteria nextest --help
+cargo soteria nextest list # list all tests
+cargo soteria nextest run # run all tests
+cargo soteria nextest run -- --kani # run kani test, or pass arguments to Soteria.
+```
+
 ## Example Test
 
 Create a simple symbolic test using the Soteria API:
@@ -95,17 +105,6 @@ Output:
 When a test fails or the analyzer crashes, its diagnostics are printed inline
 under the result, and the run finishes with a list of the failing tests and a
 non-zero exit code (`1` if any failed, `2` if any crashed, `130` if interrupted).
-
-### Nextest
-
-If you have [nextest](https://nexte.st) installed, Soteria provides a nextest adapter
-```
-cargo soteria nextest --help
-cargo soteria nextest list # list all tests
-cargo soteria nextest run # run all tests
-cargo soteria nextest run -- --kani # run kani test, or pass arguments to Soteria.
-```
-
 
 ## Docker
 
