@@ -320,7 +320,7 @@ fn discover_tests(passthrough: &[String]) -> Vec<String> {
 
 /// Parse the JSON array of test names. The whole stdout is normally one line;
 /// be tolerant of stray output by falling back to the last line that parses.
-fn parse_test_list(stdout: &str) -> Option<Vec<String>> {
+pub(crate) fn parse_test_list(stdout: &str) -> Option<Vec<String>> {
     if let Ok(v) = serde_json::from_str::<Vec<String>>(stdout.trim()) {
         return Some(v);
     }
@@ -441,7 +441,7 @@ fn classify(
 /// Build an anchored, escaped `Str`-regex that matches exactly `name`.
 /// soteria-rust's `--filter` is an OCaml `Str` substring regex, so without
 /// anchoring `foo` would also select `foo_bar`.
-fn anchored_filter(name: &str) -> String {
+pub(crate) fn anchored_filter(name: &str) -> String {
     let mut s = String::with_capacity(name.len() + 2);
     s.push('^');
     for c in name.chars() {

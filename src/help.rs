@@ -32,6 +32,11 @@ COMMANDS
        unsetup
            Remove the installed toolchain.
 
+       nextest [ARGS]
+           Run the crate's symbolic tests under cargo-nextest instead of the
+           built-in parallel runner. Requires cargo-nextest to be installed;
+           ARGS (e.g. `run`, plus test-name filters) are forwarded to it.
+
 ";
 
 /// Show help for `cargo soteria`. When the toolchain is installed, this renders
@@ -77,6 +82,7 @@ Symbolic execution for Rust, powered by Soteria.
     cargo soteria [OPTIONS]               Discover & analyse the crate's tests in parallel
     cargo soteria setup [--local PATH]    Download & install the Soteria toolchain
     cargo soteria unsetup                 Remove the installed toolchain (asks first)
+    cargo soteria nextest run [ARGS]      Run the symbolic tests under cargo-nextest
 
 {options}
     -j, --jobs N                          Tests to analyse concurrently (default: CPUs / 4)

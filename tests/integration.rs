@@ -167,6 +167,100 @@ fn parallel_classifies_and_survives_crashes() {
     fs::remove_dir_all(&home).ok();
 }
 
+// ── nextest custom-runner protocol (no network, no real soteria) ──────────────
+//
+// `cargo soteria nextest` injects this binary as cargo's target runner; nextest
+// then invokes `cargo-soteria __nextest-runner <test-bin> <protocol-args>` in
+// both its list and run phases. These tests drive that hidden mode directly
+// against the fake soteria-rust, so they verify the libtest-protocol translation
+// without needing cargo-nextest or the real analyzer installed.
+
+/// Invoke the hidden runner with a dummy test-binary path (which it ignores) and
+/// the given protocol args. Returns (exit code, stdout).
+fn run_nextest_runner(home: &Path, proto: &[&str]) -> (Option<i32>, String) {
+    let mut args = vec!["__nextest-runner", "/dummy/native-test-bin"];
+    args.extend_from_slice(proto);
+    let out = Command::new(cargo_soteria_bin())
+        .args(&args)
+        .current_dir(fixture_dir())
+        .env("SOTERIA_HOME", home)
+        .env("NO_COLOR", "1")
+        .output()
+        .expect("run cargo-soteria __nextest-runner");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+/// The list phase must emit exactly one `name: test` line per entry point on
+/// stdout — and nothing else (nextest requires clean stdout).
+#[test]
+fn nextest_runner_lists_tests_in_terse_format() {
+    let home = fresh_soteria_home();
+    install_fake_soteria(&home);
+
+    let (code, stdout) = run_nextest_runner(&home, &["--list", "--format", "terse"]);
+    assert_eq!(
+        code,
+        Some(0),
+        "list phase should succeed; stdout:\n{stdout}"
+    );
+
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "m::pass_one: test",
+            "m::pass_two: test",
+            "m::fail_one: test",
+            "m::crash_one: test",
+            "m::charon_one: test",
+            "m::anomaly_one: test",
+        ],
+        "unexpected terse listing:\n{stdout}"
+    );
+
+    fs::remove_dir_all(&home).ok();
+}
+
+/// nextest asks for the ignored set separately; soteria has none, so the runner
+/// must print nothing and succeed.
+#[test]
+fn nextest_runner_lists_no_ignored_tests() {
+    let home = fresh_soteria_home();
+    install_fake_soteria(&home);
+
+    let (code, stdout) = run_nextest_runner(&home, &["--list", "--format", "terse", "--ignored"]);
+    assert_eq!(code, Some(0));
+    assert!(
+        stdout.trim().is_empty(),
+        "expected no ignored tests:\n{stdout}"
+    );
+
+    fs::remove_dir_all(&home).ok();
+}
+
+/// The run phase must propagate soteria-rust's exit code so nextest sees
+/// pass (0) vs fail (non-zero), preserving the crash codes.
+#[test]
+fn nextest_runner_propagates_exit_codes() {
+    let home = fresh_soteria_home();
+    install_fake_soteria(&home);
+
+    for (name, expected) in [
+        ("m::pass_one", 0),   // pass
+        ("m::fail_one", 1),   // bug found
+        ("m::crash_one", 2),  // soteria crash
+        ("m::charon_one", 3), // charon crash
+    ] {
+        let (code, _) = run_nextest_runner(&home, &[name, "--exact", "--nocapture"]);
+        assert_eq!(code, Some(expected), "test {name} should exit {expected}");
+    }
+
+    fs::remove_dir_all(&home).ok();
+}
+
 /// Ctrl-C while tests are running must terminate promptly and leave no worker
 /// processes alive.
 #[test]

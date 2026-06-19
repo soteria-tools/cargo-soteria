@@ -44,10 +44,11 @@ Two further tests need neither the network nor a real soteria-rust: `parallel_cl
 
 **One binary:**
 - `cargo-soteria` — the subcommand. Sources: `src/main.rs` (CLI dispatch,
-  setup/unsetup, install), `src/run.rs` (the parallel test runner), `src/help.rs`
-  (help rendering). `cargo soteria unsetup` lists and removes the whole
-  `~/.soteria/` (showing location, total size, and installed versions, then
-  asking for confirmation).
+  setup/unsetup, install), `src/run.rs` (the parallel test runner),
+  `src/nextest.rs` (the cargo-nextest integration), `src/help.rs` (help
+  rendering). `cargo soteria unsetup` lists and removes the whole `~/.soteria/`
+  (showing location, total size, and installed versions, then asking for
+  confirmation).
 
 **Runtime flow when a user runs `cargo soteria [args...]`:**
 
@@ -103,6 +104,45 @@ version.json
 cargo soteria setup --local /path/to/soteria
 ```
 This copies `soteria/packages/soteria-rust/` from a local checkout of the upstream soteria repo instead of downloading from GitHub.
+
+### cargo-nextest integration (`src/nextest.rs`)
+
+`cargo soteria nextest [args…]` runs the crate's symbolic tests under
+[cargo-nextest](https://nexte.st) instead of the built-in parallel runner.
+
+The catch: Soteria's tests live behind `#[cfg(soteria)]` and are compiled and
+executed by `soteria-rust` (via charon), **not** by libtest — so a *native*
+`cargo`/nextest build of the crate sees **zero** tests. The integration bridges
+this exactly like `cargo miri nextest` does, via cargo's **target runner**
+mechanism (which nextest honors during *both* its list and run phases —
+https://nexte.st/docs/features/target-runners/):
+
+1. **Wrapper** (`nextest::run`): shells out to `cargo nextest [args…]`, forcing
+   `--target <host-triple>` (a runner only fires for an explicit, non-host
+   target) and injecting `--config target.<triple>.runner=["<self>",
+   "__nextest-runner"]`. Defaults to `--lib` unless the user already selected
+   targets — every probed test binary would otherwise return the *same* full
+   soteria list, duplicating each test. The host triple comes from `rustc -vV`;
+   `<self>` is `std::env::current_exe()`. Errors early if soteria isn't
+   installed or `cargo nextest` isn't on PATH.
+2. **Runner** (`nextest::runner`, hidden `__nextest-runner` verb dispatched in
+   `main()`): the program nextest invokes as
+   `<self> __nextest-runner <native-test-bin> <protocol-args…>`. It *ignores*
+   the native test binary (just a vehicle) and translates nextest's libtest
+   protocol to soteria-rust:
+   - `--list --format terse` → `soteria-rust compile --list-tests .`, reprinted
+     as `name: test` lines (clean stdout only; compile progress to stderr).
+     `--ignored` returns empty (soteria has no `#[ignore]`).
+   - `<name> --exact --nocapture` → `soteria-rust exec . --no-compile
+     --no-compile-plugins --filter ^name$`, propagating soteria's exit code
+     (nextest reads 0 = pass, non-zero = fail).
+
+The single list-phase compile populates the crate's ULLBC cache; per-test
+`--no-compile` runs reuse it (the same trick the built-in runner relies on).
+`run::parse_test_list` and `run::anchored_filter` are shared with `src/run.rs`.
+The protocol translation is covered without nextest/the real analyzer by the
+`nextest_runner_*` tests in `tests/integration.rs`, which drive the hidden
+runner against the fake soteria-rust.
 
 ### Key constants (`src/main.rs`)
 

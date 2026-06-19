@@ -11,6 +11,7 @@ use std::time::Duration;
 use zip::ZipArchive;
 
 mod help;
+mod nextest;
 mod run;
 
 /// Version of this crate, used as the install subdirectory under ~/.soteria/
@@ -738,6 +739,19 @@ fn main() {
     } else {
         &args[1..]
     };
+
+    // Hidden mode: the cargo target runner nextest invokes during its list/run
+    // phases (see src/nextest.rs). Must be handled before the `--help` sweep
+    // below, since the protocol args it receives are not ours to interpret.
+    if args.first().map(|s| s.as_str()) == Some(nextest::RUNNER_FLAG) {
+        nextest::runner(&args[1..]);
+    }
+
+    // `cargo soteria nextest [args…]` drives cargo-nextest; forward the rest
+    // (including `-h`/`--help`) so nextest renders its own help.
+    if args.first().map(|s| s.as_str()) == Some("nextest") {
+        nextest::run(&args[1..]);
+    }
 
     // Dispatch subcommands
     if args.iter().any(|a| a == "-h" || a == "--help") {
