@@ -29,6 +29,15 @@ pub fn package_dir() -> PathBuf {
     soteria_base_dir().join(VERSION)
 }
 
+// ── subprocesses ──────────────────────────────────────────────────────────────
+
+/// A cargo command.
+///
+/// This honours `$CARGO` and otherwise falls back to `cargo`.
+pub fn cargo_command() -> process::Command {
+    process::Command::new(env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+}
+
 // ── progress bars ─────────────────────────────────────────────────────────────
 
 /// A braille spinner with a trailing message, for indeterminate work.

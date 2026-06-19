@@ -288,7 +288,13 @@ fn run_serial(passthrough: &[String]) -> ! {
 
 fn discover_tests(passthrough: &[String]) -> Vec<String> {
     let sp = spinner("Discovering tests…");
-    let result = runner_common::discover_tests(passthrough, false);
+    let result = runner_common::discover_tests(
+        passthrough,
+        // The built-in runner analyses the lib target only; integration-test
+        // targets are supported through nextest (see `nextest.rs`).
+        None,
+        false,
+    );
     sp.finish_and_clear();
     result.unwrap_or_else(|e| fail(&e.message()))
 }

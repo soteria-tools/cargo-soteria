@@ -322,6 +322,11 @@ fn run_nextest_runner(home: &Path, proto: &[&str]) -> (Option<i32>, String) {
         .current_dir(fixture_dir())
         .env("SOTERIA_HOME", home)
         .env("NO_COLOR", "1")
+        // The env nextest and the wrapper provide: the binary id (lib `m`, so the
+        // runner analyses the crate source) and filtering off (so it doesn't load
+        // cargo metadata).
+        .env("NEXTEST_BINARY_ID", "m")
+        .env("SOTERIA_USE_DEFAULT_TARGETS", "0")
         .output()
         .expect("run cargo-soteria __nextest-runner");
     (
@@ -420,6 +425,8 @@ fn nextest_runner_threads_post_dashdash_flags() {
         .env("SOTERIA_HOME", &home)
         .env(extra_env.0, extra_env.1)
         .env("NO_COLOR", "1")
+        .env("NEXTEST_BINARY_ID", "m")
+        .env("SOTERIA_USE_DEFAULT_TARGETS", "0")
         .output()
         .expect("run list phase");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -443,6 +450,8 @@ fn nextest_runner_threads_post_dashdash_flags() {
         .env("SOTERIA_HOME", &home)
         .env(extra_env.0, extra_env.1)
         .env("NO_COLOR", "1")
+        .env("NEXTEST_BINARY_ID", "m")
+        .env("SOTERIA_USE_DEFAULT_TARGETS", "0")
         .output()
         .expect("run run phase");
     let stdout = String::from_utf8_lossy(&out.stdout);
