@@ -103,7 +103,7 @@ If you have [nextest](https://nexte.st) installed, Soteria provides a nextest ad
 cargo soteria nextest --help
 cargo soteria nextest list # list all tests
 cargo soteria nextest run # run all tests
-cargo soteria nextest run --help # See how to filter tests etc..
+cargo soteria nextest run -- --kani # run kani test, or pass arguments to Soteria.
 ```
 
 
