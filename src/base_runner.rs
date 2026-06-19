@@ -36,7 +36,8 @@ use std::time::{Duration, Instant};
 use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
-use crate::{fail, soteria_rust_command, spinner};
+use crate::common::{fail, ok, spinner, warn};
+use crate::runner_common::{self, anchored_filter, soteria_rust_command};
 
 /// Default worker count: a quarter of the available parallelism (at least 1).
 pub fn default_jobs() -> usize {
@@ -146,7 +147,7 @@ pub fn run(passthrough: Vec<String>, jobs: usize) -> ! {
     let tests = discover_tests(&passthrough);
     let total = tests.len();
     if total == 0 {
-        crate::ok("No tests found.");
+        ok("No tests found.");
         std::process::exit(0);
     }
 
@@ -287,52 +288,9 @@ fn run_serial(passthrough: &[String]) -> ! {
 
 fn discover_tests(passthrough: &[String]) -> Vec<String> {
     let sp = spinner("Discovering tests…");
-    let output = soteria_rust_command()
-        .arg("compile")
-        .arg("--list-tests")
-        .arg(".")
-        .args(passthrough)
-        .stdin(Stdio::null())
-        .output();
+    let result = runner_common::discover_tests(passthrough, false);
     sp.finish_and_clear();
-
-    let output = output.unwrap_or_else(|e| fail(&format!("Failed to run soteria-rust: {e}")));
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if let Some(list) = parse_test_list(&stdout) {
-        return list;
-    }
-
-    // No JSON list on stdout — surface the most useful diagnostic we can.
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success() {
-        fail(&format!(
-            "Test discovery failed (exit {}).\n{}",
-            output.status.code().unwrap_or(-1),
-            stderr.trim(),
-        ));
-    }
-    fail(&format!(
-        "Could not parse the test list from `soteria-rust compile --list-tests`.\n  stdout: {}\n  stderr: {}",
-        stdout.trim(),
-        stderr.trim(),
-    ));
-}
-
-/// Parse the JSON array of test names. The whole stdout is normally one line;
-/// be tolerant of stray output by falling back to the last line that parses.
-pub(crate) fn parse_test_list(stdout: &str) -> Option<Vec<String>> {
-    if let Ok(v) = serde_json::from_str::<Vec<String>>(stdout.trim()) {
-        return Some(v);
-    }
-    for line in stdout.lines().rev() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            if let Ok(v) = serde_json::from_str::<Vec<String>>(line) {
-                return Some(v);
-            }
-        }
-    }
-    None
+    result.unwrap_or_else(|e| fail(&e.message()))
 }
 
 // ── single test execution ────────────────────────────────────────────────────
@@ -436,25 +394,6 @@ fn classify(
         detail,
         output: output.to_string(),
     }
-}
-
-/// Build an anchored, escaped `Str`-regex that matches exactly `name`.
-/// soteria-rust's `--filter` is an OCaml `Str` substring regex, so without
-/// anchoring `foo` would also select `foo_bar`.
-pub(crate) fn anchored_filter(name: &str) -> String {
-    let mut s = String::with_capacity(name.len() + 2);
-    s.push('^');
-    for c in name.chars() {
-        // `Str` metacharacters that are special *unescaped*. Note `(` `)` `|`
-        // `{` `}` are literal in `Str` (only special when backslash-escaped),
-        // so escaping them would *change* the meaning — leave them alone.
-        if matches!(c, '.' | '*' | '+' | '?' | '[' | ']' | '^' | '$' | '\\') {
-            s.push('\\');
-        }
-        s.push(c);
-    }
-    s.push('$');
-    s
 }
 
 /// Drop the user's `--filter`/`--exclude` (and their values) from the args
@@ -616,9 +555,9 @@ fn print_summary(
 
     let not_run = total.saturating_sub(counts.done());
     if interrupted {
-        crate::warn(&format!("Interrupted — {not_run} test(s) not run."));
+        warn(&format!("Interrupted — {not_run} test(s) not run."));
     } else if not_run > 0 {
-        crate::warn(&format!("{not_run} test(s) not run."));
+        warn(&format!("{not_run} test(s) not run."));
     }
 
     if !failures.is_empty() {
@@ -641,15 +580,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn anchors_and_escapes() {
-        assert_eq!(anchored_filter("a::b"), "^a::b$");
-        // `.` `+` etc. get escaped so they match literally.
-        assert_eq!(anchored_filter("m::a.b+c"), "^m::a\\.b\\+c$");
-        // `(` `)` are literal in Str and must stay unescaped.
-        assert_eq!(anchored_filter("f::g()"), "^f::g()$");
-    }
-
-    #[test]
     fn strips_user_filter_and_exclude() {
         let args = vec![
             "--kani".to_string(),
@@ -664,15 +594,5 @@ mod tests {
             strip_filter_exclude(&args),
             vec!["--kani", "--summary", "--test", "lib"]
         );
-    }
-
-    #[test]
-    fn parses_test_list_json() {
-        let v = parse_test_list("[\"a::x\",\"b::y\"]\n").unwrap();
-        assert_eq!(v, vec!["a::x", "b::y"]);
-        // tolerate a stray leading line
-        let v = parse_test_list("warning: blah\n[\"only\"]\n").unwrap();
-        assert_eq!(v, vec!["only"]);
-        assert!(parse_test_list("not json").is_none());
     }
 }

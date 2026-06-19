@@ -41,19 +41,30 @@ Each test installs into a fresh temp directory via `SOTERIA_HOME` so it never to
 
 Two further tests need neither the network nor a real soteria-rust: `parallel_classifies_and_survives_crashes` and `interrupt_kills_running_workers` install a fake `soteria-rust` (`tests/fixtures/fake-soteria-rust.sh`) into a temp `SOTERIA_HOME` and drive the parallel runner deterministically — verifying outcome classification, crash-resilience, and that Ctrl-C leaves no worker processes alive. The parallel runner is exercised end-to-end against the real analyzer by two fixture crates: `tests/fixtures/many-tests/` (~30 tests, a mix of passing and failing) and `tests/fixtures/many-slow-tests/` (used by the Docker smoke test for sustained-load behavior).
 
-`src/run.rs` also carries plain `#[test]` units (`anchors_and_escapes`, `strips_user_filter_and_exclude`, `parses_test_list_json`) that run under a bare `cargo test` with no soteria-rust install — they cover the filter-anchoring/escaping and test-list parsing logic.
+Plain `#[test]` units run under a bare `cargo test` (`cargo test --bins`) with no soteria-rust install: `runner_common` covers filter-anchoring/escaping (`anchors_and_escapes`) and test-list parsing (`parses_test_list_json`); `base_runner` covers user-flag stripping (`strips_user_filter_and_exclude`); `main.rs` covers the clap arg parsing; `nextest` covers target-selection detection, `rustc -vV` parsing, and TOML escaping.
 
 ## Architecture
 
 `cargo-soteria` is a Cargo subcommand that manages downloading, installing, and running the pre-built `soteria-rust` tool.
 
-**One binary:**
-- `cargo-soteria` — the subcommand. Sources: `src/main.rs` (CLI dispatch,
-  setup/unsetup, install), `src/run.rs` (the parallel test runner),
-  `src/nextest.rs` (the cargo-nextest integration), `src/help.rs` (help
-  rendering). `cargo soteria unsetup` lists and removes the whole `~/.soteria/`
-  (showing location, total size, and installed versions, then asking for
-  confirmation).
+**One binary, split into focused modules** (`src/`):
+- `main.rs` — only CLI definitions (clap-derive `RunArgs`/`SetupArgs`) and the
+  argument parsing + dispatch in `main()`.
+- `common.rs` — cross-cutting helpers: install-path resolution
+  (`soteria_base_dir`/`package_dir`), the `VERSION` const, terminal UI
+  (`spinner`, `download_bar`, the `ok`/`info`/`warn`/`fail` status lines).
+- `setup.rs` — the `setup`/`unsetup` subcommands (GitHub release fetch,
+  download/extract or local copy, version tracking, toolchain check,
+  plugin pre-build, uninstall).
+- `runner_common.rs` — logic shared by both runners: `soteria_rust_command()`
+  (the env-configured invocation), `discover_tests()` (compile + list the
+  crate's entry points), `parse_test_list`, `anchored_filter`.
+- `base_runner.rs` — the built-in parallel test runner (the default action).
+- `nextest.rs` — the cargo-nextest integration.
+- `help.rs` — the rebranded `--help` output.
+
+`cargo soteria unsetup` lists and removes the whole `~/.soteria/` (showing
+location, total size, and installed versions, then asking for confirmation).
 
 **Runtime flow when a user runs `cargo soteria [args...]`:**
 
@@ -69,7 +80,7 @@ Two further tests need neither the network nor a real soteria-rust: `parallel_cl
    - Runs `soteria-rust build-plugins` to pre-compile the plugin crate, so the
      first real run doesn't pay the compilation cost (it would otherwise build
      plugins lazily on first `exec`)
-3. Otherwise, runs the crate's symbolic tests **in parallel** (`src/run.rs`):
+3. Otherwise, runs the crate's symbolic tests **in parallel** (`src/base_runner.rs`, with discovery shared from `src/runner_common.rs`):
    - **Discover:** `soteria-rust compile --list-tests .` compiles the crate once
      and prints the entry points as a one-line JSON array on stdout (progress on
      stderr). User flags (e.g. `--filter`) are forwarded here, so discovery
@@ -144,7 +155,7 @@ https://nexte.st/docs/features/target-runners/):
 
 The single list-phase compile populates the crate's ULLBC cache; per-test
 `--no-compile` runs reuse it (the same trick the built-in runner relies on).
-`run::parse_test_list` and `run::anchored_filter` are shared with `src/run.rs`.
+`runner_common::{soteria_rust_command, discover_tests, parse_test_list, anchored_filter}` are shared with `src/base_runner.rs`.
 The protocol translation is covered without nextest/the real analyzer by the
 `nextest_runner_*` tests in `tests/integration.rs` (which drive the hidden
 runner against the fake soteria-rust), and the full real handshake by

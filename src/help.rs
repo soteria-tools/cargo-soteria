@@ -7,7 +7,8 @@
 
 use colored::Colorize;
 
-use crate::{info, package_dir, soteria_rust_command, VERSION};
+use crate::common::{info, package_dir, VERSION};
+use crate::runner_common::soteria_rust_command;
 
 /// The `COMMANDS` section spliced into the rebranded help, documenting the
 /// wrapper's own subcommands. Formatted to match cmdliner's plain man layout

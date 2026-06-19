@@ -17,8 +17,9 @@
 //! The native test binary nextest builds is just a vehicle for the runner to
 //! hang off — the runner ignores its path and gets everything from soteria-rust.
 //! The single list-phase compile populates the crate's ULLBC cache, which the
-//! per-test `--no-compile` runs reuse (the same trick `src/run.rs` relies on to
-//! avoid each worker re-invoking charon).
+//! per-test `--no-compile` runs reuse (the same trick `base_runner.rs` relies
+//! on to avoid each worker re-invoking charon). Test discovery and the
+//! `--filter` escaping are shared via `runner_common`.
 //!
 //! [cargo-nextest]: https://nexte.st
 
@@ -26,7 +27,8 @@ use std::process::{Command, Stdio};
 
 use colored::Colorize;
 
-use crate::{fail, package_dir, run, soteria_rust_command};
+use crate::common::{fail, package_dir};
+use crate::runner_common::{self, anchored_filter, soteria_rust_command};
 
 // ── `cargo soteria nextest [args…]` — the wrapper ─────────────────────────────
 
@@ -123,22 +125,9 @@ fn list_phase(proto: &[String]) -> ! {
         std::process::exit(0);
     }
 
-    let output = soteria_rust_command()
-        .arg("compile")
-        .arg("--list-tests")
-        .arg(".")
-        .stdin(Stdio::null())
-        .stderr(Stdio::inherit()) // compile progress → stderr (nextest: debug)
-        .output()
-        .unwrap_or_else(|e| fail(&format!("Failed to run soteria-rust: {e}")));
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let tests = run::parse_test_list(&stdout).unwrap_or_else(|| {
-        fail(&format!(
-            "Could not parse the test list from `soteria-rust compile --list-tests` (exit {}).",
-            output.status.code().unwrap_or(-1),
-        ))
-    });
+    // Inherit stderr so the (one-time) compile progress streams as debug output;
+    // our stdout must carry only the `name: test` lines.
+    let tests = runner_common::discover_tests(&[], true).unwrap_or_else(|e| fail(&e.message()));
 
     let mut out = String::new();
     for t in &tests {
@@ -165,7 +154,7 @@ fn run_phase(proto: &[String]) -> ! {
         .arg("--no-compile")
         .arg("--no-compile-plugins")
         .arg("--filter")
-        .arg(run::anchored_filter(name))
+        .arg(anchored_filter(name))
         .stdin(Stdio::null())
         .status()
         .unwrap_or_else(|e| fail(&format!("Failed to run soteria-rust: {e}")));
