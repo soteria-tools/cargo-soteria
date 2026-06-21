@@ -4,6 +4,7 @@
 //! crate's symbolic-test entry points, and the filter-escaping used to isolate a
 //! single test.
 
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use crate::common::package_dir;
@@ -86,25 +87,32 @@ impl DiscoverError {
     }
 }
 
-/// Compile the crate at the current directory once and list its symbolic-test
-/// entry points, by running `soteria-rust compile --list-tests .` (forwarding
-/// `passthrough`, so user flags like `--filter` are respected). Compilation
-/// happens here exactly once; per-test runs then reuse the cached ULLBC via
-/// `--no-compile`.
+/// Compile the crate once and list its symbolic-test entry points.
 ///
-/// When `inherit_stderr` is set, compilation progress streams to our stderr
-/// (the runner under nextest wants this, since its stdout must stay clean);
-/// otherwise stderr is captured and surfaced only if discovery fails.
+/// This is done via `soteria-rust compile --list-tests . <args…>`. `args`
+/// carries the target selection/mode (`--test`/`--kani`/`--libtest`) and
+/// forwarded user flags (e.g. `--filter`), so the listing matches what the run
+/// phase analyses. Compiling here once lets per-test runs reuse the cached
+/// ULLBC via `--no-compile`.
+///
+/// `inherit_stderr` streams compile progress to our stderr (nextest requires
+/// stdout to be clean); otherwise stderr is captured and shown only on failure.
+/// `work_dir` is where soteria-rust runs (so `.` is the crate); `None` uses our
+/// own cwd.
 pub fn discover_tests(
-    passthrough: &[String],
+    work_dir: Option<&Path>,
+    args: &[String],
     inherit_stderr: bool,
 ) -> Result<Vec<String>, DiscoverError> {
     let mut cmd = soteria_rust_command();
     cmd.arg("compile")
         .arg("--list-tests")
         .arg(".")
-        .args(passthrough)
+        .args(args)
         .stdin(Stdio::null());
+    if let Some(dir) = work_dir {
+        cmd.current_dir(dir);
+    }
     if inherit_stderr {
         cmd.stderr(Stdio::inherit());
     }

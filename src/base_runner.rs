@@ -288,7 +288,7 @@ fn run_serial(passthrough: &[String]) -> ! {
 
 fn discover_tests(passthrough: &[String]) -> Vec<String> {
     let sp = spinner("Discovering tests…");
-    let result = runner_common::discover_tests(passthrough, false);
+    let result = runner_common::discover_tests(None, passthrough, false);
     sp.finish_and_clear();
     result.unwrap_or_else(|e| fail(&e.message()))
 }
