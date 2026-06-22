@@ -10,24 +10,30 @@
 //! phases (see <https://nexte.st/docs/features/target-runners/>):
 //!
 //!   * **list** — `<runner> <bin> --list --format terse`
-//!     → `soteria-rust compile --list-tests .`, reprinted as `name: test`
+//!     → `soteria-rust compile --list-tests . [--test <t>]`, reprinted as `name: test`
 //!   * **run**  — `<runner> <bin> <name> --exact --nocapture`
-//!     → `soteria-rust exec . --no-compile --filter ^name$`, exit 0 = pass
+//!     → `soteria-rust exec . --no-compile [--test <t>] --filter ^name$`, exit 0 = pass
 //!
 //! The native test binary nextest builds is just a vehicle for the runner to
-//! hang off — the runner ignores its path and gets everything from soteria-rust.
-//! The single list-phase compile populates the crate's ULLBC cache, which the
-//! per-test `--no-compile` runs reuse (the same trick `base_runner.rs` relies
-//! on to avoid each worker re-invoking charon). Test discovery and the
-//! `--filter` escaping are shared via `runner_common`.
+//! hang off — the runner ignores its path and gets most things from
+//! soteria-rust. The only thing nextest is used for is the binary ID, read via
+//! the `NEXTEST_BINARY_ID` field set on cargo-nextest 0.9.138 and above. This
+//! is used to determine the soteria `--test` profile, since soteria-rust
+//! analyses one target per invocation.
+//!
+//! Each binary's list-phase compile populates that target's ULLBC cache, which
+//! the per-test `--no-compile` runs reuse (the same idea `base_runner.rs`
+//! relies on to avoid each worker re-invoking charon).
 //!
 //! [cargo-nextest]: https://nexte.st
 
+use std::collections::HashSet;
+use std::io::Write;
 use std::process::{Command, Stdio};
 
 use colored::Colorize;
 
-use crate::common::{fail, package_dir};
+use crate::common::{cargo_command, fail, package_dir};
 use crate::runner_common::{self, anchored_filter, soteria_rust_command};
 
 // ── `cargo soteria nextest [args…]` — the wrapper ─────────────────────────────
@@ -59,16 +65,38 @@ pub fn run(args: &[String]) -> ! {
         toml_str(RUNNER_FLAG),
     );
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = cargo_command();
     cmd.arg("nextest");
     cmd.args(&nextest_args);
-    // Scope to the lib unit-test target unless the user already selected
-    // targets: every probed test binary returns the *same* full soteria list,
-    // so without this a crate with extra test targets would list each test
-    // several times. The lib unit-test binary is the single hook we need.
-    if !selects_targets(&nextest_args) {
-        cmd.arg("--lib");
-    }
+    // If the user didn't name any targets, let nextest build its default set
+    // and let the runner pick the proof targets per binary, from each package's
+    // `[package.metadata.soteria.default-targets]`. For `--test` targets,
+    // soteria-rust reads both `#[soteria::test]` and ordinary `#[test]`, and
+    // most integration test targets aren't meant to run symbolically, so the
+    // runner skips the ones a package didn't declare. This allows the command
+    // from a virtual workspace root, where there's no single current package.
+    // (The user can override this with `--lib`/`--test`.)
+    //
+    // In order to determine the list of default targets, the runner needs
+    // access to `cargo metadata`. Nextest also needs `cargo metadata`, and
+    // fetching it can be slow. So fetch it once, write it to a temp file, and
+    // pass the same file both to nextest (`--cargo-metadata`) and the runner
+    // (`SOTERIA_CARGO_METADATA`). `SOTERIA_USE_DEFAULT_TARGETS` is always set
+    // so the runner knows whether to do the appropriate filtering. The temp
+    // file is retained until nextest exits.
+    let use_default_targets = !selects_targets(&nextest_args);
+    cmd.env(
+        USE_DEFAULT_TARGETS_ENV,
+        if use_default_targets { "1" } else { "0" },
+    );
+    let metadata = if use_default_targets {
+        let metadata = WrapperCargoMetadata::fetch();
+        cmd.arg("--cargo-metadata").arg(metadata.path());
+        cmd.env(CARGO_METADATA_ENV, metadata.path());
+        Some(metadata)
+    } else {
+        None
+    };
     // A target runner only fires for an explicit, non-host `--target`, so force
     // the host triple (exactly as cargo-miri does).
     cmd.arg("--target").arg(&triple);
@@ -80,7 +108,11 @@ pub fn run(args: &[String]) -> ! {
         cmd.env(EXTRA_ARGS_ENV, encode_extra_args(&soteria_args));
     }
 
-    match cmd.status() {
+    let status = cmd.status();
+    // `process::exit` below skips destructors, so delete the metadata temp file
+    // explicitly now that nextest has consumed it.
+    drop(metadata);
+    match status {
         Ok(st) => std::process::exit(st.code().unwrap_or(1)),
         Err(e) => fail(&format!("Failed to run `cargo nextest`: {e}")),
     }
@@ -136,6 +168,97 @@ fn selects_targets(args: &[String]) -> bool {
     })
 }
 
+// ── default target selection (`[package.metadata.soteria.default-targets]`) ────
+
+/// The crate's declared default proof targets, read from
+/// `[package.metadata.soteria.default-targets]`:
+///
+/// ```toml
+/// [package.metadata.soteria.default-targets]
+/// lib = true            # analyse src/ `#[soteria::test]` proofs (the default)
+/// test = ["soteria"]    # integration-test targets that are proof harnesses
+/// ```
+///
+/// Both keys are optional.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultTargets {
+    #[serde(default = "default_lib")]
+    lib: bool,
+    #[serde(default)]
+    test: Vec<String>,
+}
+
+/// Return the default value for `lib`: true.
+fn default_lib() -> bool {
+    true
+}
+
+impl Default for DefaultTargets {
+    /// Return the default value.
+    ///
+    /// A package with no `[default-targets]` table behaves like an empty one:
+    /// `lib = true` (analyse the library), but do not look at integration-test
+    /// targets.
+    fn default() -> Self {
+        DefaultTargets {
+            lib: default_lib(),
+            test: Vec::new(),
+        }
+    }
+}
+
+/// The `cargo metadata` fetched in the outer invocation, written to a temp file
+/// so the metadata is available both to nextest and to our target runner.
+///
+/// The runner reads it to decide which targets contain proofs (see
+/// [`ProbedBinary::is_default_target`]).
+struct WrapperCargoMetadata {
+    /// The verbatim `cargo metadata` JSON on disk.
+    file: tempfile::NamedTempFile,
+}
+
+impl WrapperCargoMetadata {
+    /// Run and capture `cargo metadata`.
+    fn fetch() -> Self {
+        let output = cargo_command()
+            // Do not pass in --no-deps here -- nextest requires dependencies to
+            // be present in the metadata.
+            .args(["metadata", "--format-version", "1"])
+            .output()
+            .unwrap_or_else(|e| fail(&format!("Could not run `cargo metadata`: {e}")));
+        if !output.status.success() {
+            fail(&format!(
+                "`cargo metadata` failed ({}).\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let mut file = tempfile::Builder::new()
+            .prefix("soteria-cargo-metadata-")
+            .suffix(".json")
+            .tempfile()
+            .unwrap_or_else(|e| {
+                fail(&format!(
+                    "Could not create a temp file for cargo metadata: {e}"
+                ))
+            });
+        file.write_all(&output.stdout)
+            .and_then(|()| file.flush())
+            .unwrap_or_else(|e| {
+                fail(&format!(
+                    "Could not write cargo metadata to a temp file: {e}"
+                ))
+            });
+        WrapperCargoMetadata { file }
+    }
+
+    /// The path to the cargo metadata file.
+    fn path(&self) -> &std::path::Path {
+        self.file.path()
+    }
+}
+
 // ── `__nextest-runner <bin> <args…>` — the hidden cargo target runner ─────────
 
 /// The verb that marks this binary as nextest's target runner (the second
@@ -144,22 +267,208 @@ pub const RUNNER_FLAG: &str = "__nextest-runner";
 
 /// Hidden mode invoked by nextest as `<exe> __nextest-runner <test-bin> <args…>`.
 /// `args` is everything after the flag: `[<test-bin>, <protocol args…>]`. We
-/// ignore the (native, soteria-less) test binary and translate nextest's libtest
-/// protocol into soteria-rust calls. Diverges.
+/// ignore the (native, soteria-less) test binary; what matters is the cargo
+/// target it stands for, read from `NEXTEST_BINARY_ID` (see [`ProbedBinary`]).
+/// Diverges.
 pub fn runner(args: &[String]) -> ! {
     // Drop the test-binary path; the protocol args are what matter.
     let proto = args.get(1..).unwrap_or(&[]);
+    let binary = ProbedBinary::from_env();
 
-    if proto.iter().any(|a| a == "--list") {
-        list_phase(proto);
+    // If the wrapper says to use default targets, skip any binary that isn't a
+    // default target.
+    if use_default_targets() && !binary.is_default_target(&RunnerCargoMetadata::load()) {
+        std::process::exit(0);
     }
-    run_phase(proto);
+
+    let profile = binary.test_target();
+    if proto.iter().any(|a| a == "--list") {
+        list_phase(proto, profile);
+    }
+    run_phase(proto, profile);
+}
+
+/// Return true if the wrapper asked us to filter to the default proof targets.
+fn use_default_targets() -> bool {
+    match std::env::var(USE_DEFAULT_TARGETS_ENV).as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        Ok(other) => fail(&format!(
+            "{USE_DEFAULT_TARGETS_ENV} should be `0` or `1`, but is `{other}`. \
+             Are you using `cargo soteria nextest`?"
+        )),
+        Err(_) => fail(&format!(
+            "{USE_DEFAULT_TARGETS_ENV} is not set. Are you using \
+            `cargo soteria nextest`?"
+        )),
+    }
+}
+
+/// Nextest's binary ID environment variable, set for each probed binary in both
+/// the list and run phases.
+const BINARY_ID_ENV: &str = "NEXTEST_BINARY_ID";
+
+/// The environment variable set in the wrapper to determine whether the runner
+/// should filter to declared proof targets.
+const USE_DEFAULT_TARGETS_ENV: &str = "SOTERIA_USE_DEFAULT_TARGETS";
+
+/// If SOTERIA_USE_DEFAULT_TARGETS=1, the environment variable set by [`run`] to
+/// the path of the shared `cargo metadata` JSON, so the runner can read each
+/// package's `[default-targets]`.
+const CARGO_METADATA_ENV: &str = "SOTERIA_CARGO_METADATA";
+
+/// The cargo target a probed binary represents, parsed from
+/// `NEXTEST_BINARY_ID`.
+struct ProbedBinary {
+    package: String,
+    target: TargetKind,
+}
+
+/// Which kind of cargo target a probed binary is.
+enum TargetKind {
+    /// `pkg`: the library / proc-macro unit-test binary; analysed as crate source.
+    Lib,
+    /// `pkg::name`: the integration-test target `tests/name/`.
+    IntegrationTest(String),
+    /// `pkg::kind/name`: a bin/example/bench unit-test binary. The string is the
+    /// kind (`bin`/`example`/`bench`). soteria-rust can't analyse these.
+    Other(String),
+}
+
+impl ProbedBinary {
+    fn from_env() -> Self {
+        let id = std::env::var(BINARY_ID_ENV).unwrap_or_else(|_| {
+            fail(&format!(
+                "{BINARY_ID_ENV} is not set while listing tests.\n  \
+                 `cargo soteria nextest` requires cargo-nextest 0.9.138 or newer; see \
+                 https://nexte.st/docs/installation/pre-built-binaries/ or install from \
+                 source with `cargo install cargo-nextest --locked`."
+            ))
+        });
+        Self::parse(&id)
+    }
+
+    /// Parse the `NEXTEST_BINARY_ID` format.
+    fn parse(id: &str) -> Self {
+        match id.split_once("::") {
+            None => ProbedBinary {
+                package: id.to_string(),
+                target: TargetKind::Lib,
+            },
+            Some((package, rest)) => {
+                let target = match rest.split_once('/') {
+                    None => TargetKind::IntegrationTest(rest.to_string()),
+                    Some((kind, _name)) => TargetKind::Other(kind.to_string()),
+                };
+                ProbedBinary {
+                    package: package.to_string(),
+                    target,
+                }
+            }
+        }
+    }
+
+    /// Return the soteria `--test` profile.
+    ///
+    /// * `None` means the lib target.
+    /// * `Some(name)` means the integration-test target `name`.
+    ///
+    /// At the moment, soteria doesn't support other targets like `bin` or
+    /// `example`. In normal use this should never occur.
+    fn test_target(&self) -> Option<&str> {
+        match &self.target {
+            TargetKind::Lib => None,
+            TargetKind::IntegrationTest(name) => Some(name),
+            TargetKind::Other(kind) => fail(&format!(
+                "cargo-soteria can't analyse {kind} targets (in package `{package}`); \
+                 only the library and integration tests are supported.",
+                package = self.package
+            )),
+        }
+    }
+
+    /// Return true if this binary is a default target.
+    fn is_default_target(&self, metadata: &RunnerCargoMetadata) -> bool {
+        let declared = metadata.default_targets_for(&self.package);
+        match &self.target {
+            TargetKind::Lib => declared.lib,
+            TargetKind::IntegrationTest(name) => declared.test.iter().any(|t| t == name),
+            TargetKind::Other(_) => false,
+        }
+    }
+}
+
+/// The subset of the shared cargo metadata the runner reads.
+///
+/// This is a lighter form of the full `cargo metadata` output.
+#[derive(serde::Deserialize)]
+struct RunnerCargoMetadata {
+    packages: Vec<MetadataPackage>,
+    workspace_members: HashSet<String>,
+}
+
+/// One entry of `cargo metadata`'s `packages` array (only the fields we read).
+#[derive(serde::Deserialize)]
+struct MetadataPackage {
+    name: String,
+    id: String,
+    /// The `[package.metadata]` table, or `None`. (`cargo metadata` emits JSON
+    /// `null` here when the table is absent.)
+    #[serde(default)]
+    metadata: Option<serde_json::Value>,
+}
+
+impl RunnerCargoMetadata {
+    fn load() -> Self {
+        let path = std::env::var(CARGO_METADATA_ENV).unwrap_or_else(|_| {
+            fail(&format!(
+                "{CARGO_METADATA_ENV} is unset while {USE_DEFAULT_TARGETS_ENV} is on. \
+                 This is a bug in `cargo soteria nextest`."
+            ))
+        });
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|e| fail(&format!("Could not read cargo metadata from {path}: {e}")));
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|e| fail(&format!("Could not parse cargo metadata from {path}: {e}")))
+    }
+
+    /// The named package's effective `[default-targets]`.
+    ///
+    /// The lookup is restricted to workspace members so a same-named transitive
+    /// dependency can't shadow the workspace package nextest actually probed.
+    fn default_targets_for(&self, package: &str) -> DefaultTargets {
+        let pkg = self
+            .packages
+            .iter()
+            .find(|p| p.name == package && self.workspace_members.contains(&p.id))
+            .unwrap_or_else(|| {
+                fail(&format!(
+                    "Workspace package `{package}` (from {BINARY_ID_ENV}) is not in the cargo \
+                     metadata. This is a bug in `cargo soteria nextest`."
+                ))
+            });
+        match pkg
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("soteria"))
+            .and_then(|s| s.get("default-targets"))
+        {
+            None => DefaultTargets::default(),
+            Some(declaration) => serde_json::from_value(declaration.clone()).unwrap_or_else(|e| {
+                fail(&format!(
+                    "Invalid `[package.metadata.soteria.default-targets]` for package \
+                     `{package}`: {e}\n  Expected `lib` (a boolean) and/or `test` (an \
+                     array of integration-test target names)."
+                ))
+            }),
+        }
+    }
 }
 
 /// List phase: emit one `name: test` line per discovered entry point, and
 /// nothing else on stdout (nextest requires clean stdout; soteria's compile
 /// progress stays on stderr).
-fn list_phase(proto: &[String]) -> ! {
+fn list_phase(proto: &[String], test_target: Option<&str>) -> ! {
     // soteria has no notion of `#[ignore]`; when nextest asks for the ignored
     // set, report none.
     if proto.iter().any(|a| a == "--ignored") {
@@ -170,7 +479,7 @@ fn list_phase(proto: &[String]) -> ! {
     // our stdout must carry only the `name: test` lines. The compile must use
     // the same soteria flags as the per-test execs (e.g. `--kani`), so the
     // listed entry points match what the run phase will analyse.
-    let tests = runner_common::discover_tests(&extra_soteria_args(), true)
+    let tests = runner_common::discover_tests(&extra_soteria_args(), test_target, true)
         .unwrap_or_else(|e| fail(&e.message()));
 
     let mut out = String::new();
@@ -186,17 +495,21 @@ fn list_phase(proto: &[String]) -> ! {
 /// the exit code as pass (0) / fail (non-zero); we propagate soteria's own code
 /// (1 = bug found, 2 = soteria crash, 3 = charon crash), mapping a fatal signal
 /// to a generic failure.
-fn run_phase(proto: &[String]) -> ! {
+fn run_phase(proto: &[String], test_target: Option<&str>) -> ! {
     let name = proto
         .iter()
         .find(|a| !a.starts_with('-'))
         .unwrap_or_else(|| fail("No test name passed to the soteria nextest runner."));
 
-    let status = soteria_rust_command()
-        .arg("exec")
+    let mut cmd = soteria_rust_command();
+    cmd.arg("exec")
         .arg(".")
         .arg("--no-compile")
-        .arg("--no-compile-plugins")
+        .arg("--no-compile-plugins");
+    if let Some(profile) = test_target {
+        cmd.arg("--test").arg(profile);
+    }
+    let status = cmd
         .args(extra_soteria_args())
         .arg("--filter")
         .arg(anchored_filter(name))
@@ -221,7 +534,7 @@ fn ensure_installed() {
 }
 
 fn ensure_nextest() {
-    let ok = Command::new("cargo")
+    let ok = cargo_command()
         .args(["nextest", "--version"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -293,6 +606,129 @@ fn toml_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binary_id_parses_to_target() {
+        // Library and proc-macro unit tests use just the package name.
+        let b = ProbedBinary::parse("iddqd");
+        assert_eq!(b.package, "iddqd");
+        assert!(matches!(b.target, TargetKind::Lib));
+        assert_eq!(b.test_target(), None);
+
+        // Integration tests: `pkg::name`.
+        let b = ProbedBinary::parse("iddqd::soteria");
+        assert_eq!(b.package, "iddqd");
+        assert!(matches!(&b.target, TargetKind::IntegrationTest(n) if n == "soteria"));
+        assert_eq!(b.test_target(), Some("soteria"));
+
+        // Other kinds (`pkg::kind/name`).
+        let b = ProbedBinary::parse("iddqd::bin/cli");
+        assert_eq!(b.package, "iddqd");
+        assert!(matches!(b.target, TargetKind::Other(kind) if kind == "bin"));
+    }
+
+    #[test]
+    fn is_default_target_per_package() {
+        // Two workspace packages: one declares `lib = false, test = ["soteria"]`,
+        // the other has no declaration (so the defaults: `lib = true`, no test
+        // targets — its `metadata` is JSON `null`, as cargo emits it).
+        let metadata: RunnerCargoMetadata = serde_json::from_value(serde_json::json!({
+            "workspace_members": [
+                "path+file:///declared#0.1.0",
+                "path+file:///bare#0.1.0"
+            ],
+            "packages": [
+                {
+                    "name": "declared",
+                    "id": "path+file:///declared#0.1.0",
+                    "metadata": {
+                        "soteria": {
+                            "default-targets": { "lib": false, "test": ["soteria"] }
+                        }
+                    }
+                },
+                {
+                    "name": "bare",
+                    "id": "path+file:///bare#0.1.0",
+                    "metadata": null
+                }
+            ]
+        }))
+        .unwrap();
+        let is_dt = |id: &str| ProbedBinary::parse(id).is_default_target(&metadata);
+
+        // `declared`: lib opted out, only the `soteria` test target counts.
+        assert!(!is_dt("declared")); // lib = false
+        assert!(is_dt("declared::soteria")); // in `test`
+        assert!(!is_dt("declared::integration")); // not in `test`
+        assert!(!is_dt("declared::bin/cli")); // not a soteria target
+
+        // `bare`: no declaration, so the lib is analysed by default, but test
+        // targets are not.
+        assert!(is_dt("bare")); // default lib = true
+        assert!(!is_dt("bare::soteria")); // default test = []
+    }
+
+    #[test]
+    fn default_targets_ignores_same_named_dependency() {
+        // `cargo metadata` is fetched with dependencies, so `packages` can list a
+        // dependency whose name collides with a workspace member's. The lookup
+        // must resolve to the workspace member — identified by its id being in
+        // `workspace_members` — not the dependency, even though the dependency is
+        // listed first (so a name-only lookup would pick the wrong one).
+        let metadata: RunnerCargoMetadata = serde_json::from_value(serde_json::json!({
+            "workspace_members": ["path+file:///ws#collide@0.1.0"],
+            "packages": [
+                {
+                    // A same-named dependency, listed first; must be ignored.
+                    "name": "collide",
+                    "id": "registry+https://example.com#collide@2.0.0",
+                    "metadata": {
+                        "soteria": { "default-targets": { "lib": true, "test": ["other"] } }
+                    }
+                },
+                {
+                    // The real workspace member: lib opted out, one test target.
+                    "name": "collide",
+                    "id": "path+file:///ws#collide@0.1.0",
+                    "metadata": {
+                        "soteria": { "default-targets": { "lib": false, "test": ["soteria"] } }
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+        let is_dt = |id: &str| ProbedBinary::parse(id).is_default_target(&metadata);
+
+        // The workspace member's declaration wins, not the dependency's.
+        assert!(!is_dt("collide")); // workspace member: lib = false
+        assert!(is_dt("collide::soteria")); // workspace member: in `test`
+        assert!(!is_dt("collide::other")); // only the dependency declared this
+    }
+
+    #[test]
+    fn default_targets_parse_from_metadata_json() {
+        // lib + test.
+        let json = serde_json::json!({ "lib": true, "test": ["soteria"] });
+        let parsed: DefaultTargets = serde_json::from_value(json).unwrap();
+        assert!(parsed.lib);
+        assert_eq!(parsed.test, vec!["soteria".to_string()]);
+
+        // lib defaults to true.
+        let test_only = serde_json::json!({ "test": ["soteria"] });
+        let parsed: DefaultTargets = serde_json::from_value(test_only).unwrap();
+        assert!(parsed.lib);
+        assert_eq!(parsed.test, vec!["soteria".to_string()]);
+
+        // Opting the library out is explicit.
+        let no_lib = serde_json::json!({ "lib": false, "test": ["soteria"] });
+        let parsed: DefaultTargets = serde_json::from_value(no_lib).unwrap();
+        assert!(!parsed.lib);
+
+        // A typoed key is rejected rather than silently ignored.
+        let bad = serde_json::json!({ "lib": true, "tests": ["soteria"] });
+        assert!(serde_json::from_value::<DefaultTargets>(bad).is_err());
+    }
 
     #[test]
     fn detects_user_target_selection() {

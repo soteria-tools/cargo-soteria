@@ -97,14 +97,15 @@ impl DiscoverError {
 /// otherwise stderr is captured and surfaced only if discovery fails.
 pub fn discover_tests(
     passthrough: &[String],
+    test_target: Option<&str>,
     inherit_stderr: bool,
 ) -> Result<Vec<String>, DiscoverError> {
     let mut cmd = soteria_rust_command();
-    cmd.arg("compile")
-        .arg("--list-tests")
-        .arg(".")
-        .args(passthrough)
-        .stdin(Stdio::null());
+    cmd.arg("compile").arg("--list-tests").arg(".");
+    if let Some(test_target) = test_target {
+        cmd.arg("--test").arg(test_target);
+    }
+    cmd.args(passthrough).stdin(Stdio::null());
     if inherit_stderr {
         cmd.stderr(Stdio::inherit());
     }
