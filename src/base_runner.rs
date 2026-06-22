@@ -28,6 +28,7 @@
 use std::collections::HashSet;
 use std::io::{IsTerminal, Read, Seek, SeekFrom};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -37,7 +38,7 @@ use colored::Colorize;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::common::{fail, ok, spinner, warn};
-use crate::runner_common::{self, anchored_filter, soteria_rust_command};
+use crate::runner_common::{self, anchored_filter, crate_dir, soteria_rust_command};
 
 /// Default worker count: a quarter of the available parallelism (at least 1).
 pub fn default_jobs() -> usize {
@@ -141,10 +142,10 @@ pub fn run(passthrough: Vec<String>, jobs: usize) -> ! {
     // thread, streaming its own output directly. (`-j 1`, or the default on
     // machines with few CPUs.)
     if jobs == 1 {
-        run_serial(&passthrough);
+        run_serial(None, &passthrough);
     }
 
-    let tests = discover_tests(&passthrough);
+    let tests = discover_tests(None, &passthrough);
     let total = tests.len();
     if total == 0 {
         ok("No tests found.");
@@ -153,6 +154,7 @@ pub fn run(passthrough: Vec<String>, jobs: usize) -> ! {
 
     let jobs = jobs.clamp(1, total);
     let exec_args = Arc::new(strip_filter_exclude(&passthrough));
+    let work_dir = Arc::new(crate_dir(None).to_path_buf());
     let tests = Arc::new(tests);
     let tty = std::io::stderr().is_terminal();
 
@@ -196,6 +198,7 @@ pub fn run(passthrough: Vec<String>, jobs: usize) -> ! {
     for bar in &worker_bars {
         let tests = tests.clone();
         let exec_args = exec_args.clone();
+        let work_dir = work_dir.clone();
         let cursor = cursor.clone();
         let interrupted = interrupted.clone();
         let registry = registry.clone();
@@ -211,7 +214,14 @@ pub fn run(passthrough: Vec<String>, jobs: usize) -> ! {
                 bar.reset_elapsed();
                 bar.set_message(test.clone());
                 let t0 = Instant::now();
-                let outcome = run_one(test, &exec_args, tty, &registry, &interrupted);
+                let outcome = run_one(
+                    test,
+                    work_dir.as_path(),
+                    &exec_args,
+                    tty,
+                    &registry,
+                    &interrupted,
+                );
                 bar.set_message("idle".dimmed().to_string());
                 let result = TestResult {
                     name: test.clone(),
@@ -272,10 +282,10 @@ pub fn run(passthrough: Vec<String>, jobs: usize) -> ! {
 /// `-j 1`: skip discovery and fan-out — run `soteria-rust exec . [args]`, which
 /// analyses every test on a single thread and streams its own output directly.
 /// Diverges.
-fn run_serial(passthrough: &[String]) -> ! {
+fn run_serial(work_dir: Option<&Path>, passthrough: &[String]) -> ! {
     let status = soteria_rust_command()
         .arg("exec")
-        .arg(".")
+        .arg(crate_dir(work_dir))
         .args(passthrough)
         .status();
     match status {
@@ -286,9 +296,9 @@ fn run_serial(passthrough: &[String]) -> ! {
 
 // ── discovery ────────────────────────────────────────────────────────────────
 
-fn discover_tests(passthrough: &[String]) -> Vec<String> {
+fn discover_tests(work_dir: Option<&Path>, passthrough: &[String]) -> Vec<String> {
     let sp = spinner("Discovering tests…");
-    let result = runner_common::discover_tests(None, passthrough, false);
+    let result = runner_common::discover_tests(work_dir, passthrough, false);
     sp.finish_and_clear();
     result.unwrap_or_else(|e| fail(&e.message()))
 }
@@ -297,6 +307,7 @@ fn discover_tests(passthrough: &[String]) -> Vec<String> {
 
 fn run_one(
     test: &str,
+    work_dir: &Path,
     exec_args: &[String],
     tty: bool,
     registry: &Mutex<HashSet<i32>>,
@@ -304,7 +315,7 @@ fn run_one(
 ) -> RunOutcome {
     let mut cmd = soteria_rust_command();
     cmd.arg("exec")
-        .arg(".")
+        .arg(work_dir)
         .arg("--no-compile")
         .arg("--no-compile-plugins")
         .args(exec_args)

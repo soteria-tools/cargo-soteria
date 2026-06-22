@@ -87,6 +87,11 @@ impl DiscoverError {
     }
 }
 
+/// Return the crate directory passed into soteria-rust.
+pub(crate) fn crate_dir(work_dir: Option<&Path>) -> &Path {
+    work_dir.unwrap_or(Path::new("."))
+}
+
 /// Compile the crate once and list its symbolic-test entry points.
 ///
 /// This is done via `soteria-rust compile --list-tests . <args…>`. `args`
@@ -97,8 +102,9 @@ impl DiscoverError {
 ///
 /// `inherit_stderr` streams compile progress to our stderr (nextest requires
 /// stdout to be clean); otherwise stderr is captured and shown only on failure.
-/// `work_dir` is where soteria-rust runs (so `.` is the crate); `None` uses our
-/// own cwd.
+///
+/// `work_dir` is the directory passed into `soteria-rust compile`; `None` uses
+/// the cwd.
 pub fn discover_tests(
     work_dir: Option<&Path>,
     args: &[String],
@@ -107,12 +113,9 @@ pub fn discover_tests(
     let mut cmd = soteria_rust_command();
     cmd.arg("compile")
         .arg("--list-tests")
-        .arg(".")
+        .arg(crate_dir(work_dir))
         .args(args)
         .stdin(Stdio::null());
-    if let Some(dir) = work_dir {
-        cmd.current_dir(dir);
-    }
     if inherit_stderr {
         cmd.stderr(Stdio::inherit());
     }
