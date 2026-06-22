@@ -27,7 +27,7 @@ use std::process::{Command, Stdio};
 
 use colored::Colorize;
 
-use crate::common::{fail, package_dir};
+use crate::common::{cargo_command, fail, package_dir};
 use crate::runner_common::{self, anchored_filter, soteria_rust_command};
 
 // ── `cargo soteria nextest [args…]` — the wrapper ─────────────────────────────
@@ -59,7 +59,7 @@ pub fn run(args: &[String]) -> ! {
         toml_str(RUNNER_FLAG),
     );
 
-    let mut cmd = Command::new("cargo");
+    let mut cmd = cargo_command();
     cmd.arg("nextest");
     cmd.args(&nextest_args);
     // Scope to the lib unit-test target unless the user already selected
@@ -170,7 +170,7 @@ fn list_phase(proto: &[String]) -> ! {
     // our stdout must carry only the `name: test` lines. The compile must use
     // the same soteria flags as the per-test execs (e.g. `--kani`), so the
     // listed entry points match what the run phase will analyse.
-    let tests = runner_common::discover_tests(&extra_soteria_args(), true)
+    let tests = runner_common::discover_tests(None, &extra_soteria_args(), true)
         .unwrap_or_else(|e| fail(&e.message()));
 
     let mut out = String::new();
@@ -221,7 +221,7 @@ fn ensure_installed() {
 }
 
 fn ensure_nextest() {
-    let ok = Command::new("cargo")
+    let ok = cargo_command()
         .args(["nextest", "--version"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
