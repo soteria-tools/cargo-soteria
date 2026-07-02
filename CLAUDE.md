@@ -63,19 +63,31 @@ Plain `#[test]` units run under a bare `cargo test` (`cargo test --bins`) with n
 - `nextest.rs` — the cargo-nextest integration.
 - `help.rs` — the rebranded `--help` output.
 
-`cargo soteria unsetup` lists and removes the whole `~/.soteria/` (showing
-location, total size, and installed versions, then asking for confirmation).
+`cargo soteria unsetup` removes the whole `~/.soteria/` (showing location, total
+size, and the installed release read from the `VERSION` file, then asking for
+confirmation).
 
 **Runtime flow when a user runs `cargo soteria [args...]`:**
 
 1. Cargo invokes `cargo-soteria soteria [args...]`; `main()` strips the `soteria` word Cargo inserts, then dispatches on the first arg. Argument parsing is clap-derive (`RunArgs`, `SetupArgs` in `src/main.rs`); the default (no-subcommand) path owns only `-j`/`--jobs` and forwards everything else verbatim to `soteria-rust exec .` via a `trailing_var_arg` bag, so our own flags must precede the forwarded ones. `nextest`/`__nextest-runner` are dispatched before parsing and forward raw args.
 2. If the first arg is `setup`, calls `cmd_setup()`:
-   - Hits the GitHub API for `soteria-tools/soteria` releases at tag `nightly`
-   - Downloads the platform asset chosen by `expected_asset_name()`:
-     `soteria-rust-macos-arm64.zip` (macOS ARM64) or
-     `soteria-rust-linux-x86_64.zip` (Linux x86_64)
-   - Extracts atomically to `~/.soteria/<CARGO_PKG_VERSION>/` via a `.installing` temp dir
-   - Writes `~/.soteria/<version>/version.json` with release ID for update detection
+   - Resolves which release to install from the `--release` flag: no flag →
+     the latest patch of the highest supported minor (`pick_default` over
+     `GET /releases?per_page=100`); `--release nightly` → the rolling nightly;
+     `--release X.Y.Z` → that exact version. Installing the nightly or a version
+     outside `MIN_SUPPORTED_MINOR..=MAX_SUPPORTED_MINOR` warns and asks to
+     confirm (`--yes` skips the prompt).
+   - Downloads the platform bundle picked by `find_platform_asset()`, which
+     matches a `soteria-rust-` prefix + platform suffix (`macos-arm64.zip` /
+     `linux-x86_64.zip`). This tolerates both the nightly's unversioned name
+     (`soteria-rust-macos-arm64.zip`) and a versioned release's embedded version
+     (`soteria-rust-v0.1.0-macos-arm64.zip`), while the prefix guard skips the
+     sibling `soteria-c-…` bundle
+   - Extracts atomically to `~/.soteria/soteria-release/` (a single fixed folder,
+     overwritten each install) via a `.installing` temp dir
+   - Writes `version.json` (release ID, for update detection) and a plain-text
+     `VERSION` file (human-readable name, e.g. `0.3.0` or `nightly-<date-time>`)
+     inside that folder
    - Runs `obol toolchain-path` to verify the Rust toolchain is present
    - Runs `soteria-rust build-plugins` to pre-compile the plugin crate, so the
      first real run doesn't pay the compilation cost (it would otherwise build
@@ -99,21 +111,22 @@ location, total size, and installed versions, then asking for confirmation).
      z3/charon children) survives the interrupt.
 
    All soteria-rust invocations set up the environment first:
-   - `DYLD_LIBRARY_PATH` (macOS) / `LD_LIBRARY_PATH` (Linux) → `~/.soteria/<version>/lib/`
+   - `DYLD_LIBRARY_PATH` (macOS) / `LD_LIBRARY_PATH` (Linux) → `~/.soteria/soteria-release/lib/`
    - `SOTERIA_Z3_PATH`, `SOTERIA_OBOL_PATH`, `SOTERIA_CHARON_PATH` → paths under `bin/`
-   - `SOTERIA_RUST_PLUGINS` → `~/.soteria/<version>/plugins/`
+   - `SOTERIA_RUST_PLUGINS` → `~/.soteria/soteria-release/plugins/`
 
-**Install directory structure** (`~/.soteria/<version>/`):
+**Install directory structure** (`~/.soteria/soteria-release/`):
 ```
 bin/       soteria-rust, z3, obol, charon, *-driver
 lib/       bundled shared libs — .dylib (macOS) / .so (Linux): libgmp, libz3, etc.
 plugins/   soteria/, soteria_macros/, std/, kani/, kani_macros/
-version.json
+version.json   machine-readable: release_tag, published_at, release_id
+VERSION        human-readable release name (0.3.0 or nightly-<date-time>)
 ```
 
-**Version tracking:** `version.json` stores the GitHub release ID; on `setup`, if the installed release ID matches the latest nightly, the user is asked to confirm before re-downloading.
+**Version tracking:** `version.json` stores the GitHub release ID; on `setup`, if the installed release ID matches the one being installed, the user is asked to confirm before re-downloading. The single fixed `soteria-release/` folder (not per-version) is overwritten on each install, so only one toolchain sits on disk.
 
-**Platform constraint:** `build.rs` emits a compile error for any target other than `aarch64-apple-darwin` (macOS ARM64) or `x86_64-unknown-linux-gnu` (Linux x86_64). The runtime (`expected_asset_name()`) also checks and exits early for unsupported platforms. The macOS path is what `cargo install` produces; the Linux path backs the Docker image.
+**Platform constraint:** `build.rs` emits a compile error for any target other than `aarch64-apple-darwin` (macOS ARM64) or `x86_64-unknown-linux-gnu` (Linux x86_64). The runtime (`platform_asset_suffix()`) also checks and exits early for unsupported platforms. The macOS path is what `cargo install` produces; the Linux path backs the Docker image.
 
 **Local install workflow** (for testing against an in-progress soteria build):
 ```bash
@@ -173,19 +186,20 @@ The protocol translation is covered without nextest/the real analyzer by the
 runner against the fake soteria-rust), and the full real handshake by
 `nextest_online_install_and_run`.
 
-### Key constants (`src/main.rs`)
+### Key constants (`src/setup.rs`, except the install dir in `src/common.rs`)
 
 | Constant | Value |
 |---|---|
 | `REPO_OWNER` | `soteria-tools` |
 | `REPO_NAME` | `soteria` |
-| `RELEASE_TAG` | `nightly` |
-| Install base | `~/.soteria/<CARGO_PKG_VERSION>/` |
+| `RELEASE_TAG` | `nightly` (the moving nightly tag) |
+| `MIN_SUPPORTED_MINOR` / `MAX_SUPPORTED_MINOR` | `(0,1)` / `(0,3)` — inclusive `(major,minor)` window; installs outside it warn (illustrative, edit as versioning proceeds) |
+| Install dir (`common::RELEASE_DIR`) | `~/.soteria/soteria-release/` |
 
 ### Adding a new platform
 
 1. Build the soteria package on the target platform (the upstream soteria repo's CI, or `make package-soteria-rust` in a soteria checkout).
-2. Add platform detection in `expected_asset_name()` and the `build.rs` check.
+2. Add platform detection in `platform_asset_suffix()` and the `build.rs` check.
 3. Update `supported-platforms` in `Cargo.toml`.
 
 ### Docker image
@@ -199,8 +213,10 @@ local Rust install or to run `setup`.
 - *builder*: `rust:1-bookworm`, `cargo install --path . --bin cargo-soteria`.
 - *runtime*: `ubuntu:24.04` (Noble required — obol needs GLIBC ≥ 2.39, which
   bookworm lacks). Bootstraps rustup with `--default-toolchain none`, then bakes
-  in `cargo-soteria setup` so the soteria-rust nightly ships in the image and
-  users never run `setup`. Because `setup` also runs `build-plugins`, the
+  in `cargo-soteria setup --release nightly --yes` so the soteria-rust nightly
+  ships in the image and users never run `setup` (`--release nightly` because the
+  default is now a stable release; `--yes` because the nightly's confirmation
+  prompt can't be answered in a non-interactive build). Because `setup` also runs `build-plugins`, the
   plugin crate is compiled at image-build time, so analysis starts fast on the
   first `docker run` instead of paying a multi-minute compile. The bootstrap
   `stable` toolchain is dropped in the
@@ -217,13 +233,13 @@ runtime:
 |---|---|
 | `RUSTUP_HOME` | `/usr/local/rustup` |
 | `CARGO_HOME` | `/usr/local/cargo` |
-| `SOTERIA_HOME` | `/opt/soteria` (→ install at `/opt/soteria/<version>/`) |
+| `SOTERIA_HOME` | `/opt/soteria` (→ install at `/opt/soteria/soteria-release/`) |
 | `HOME` | `/home/soteria` |
 
 `/opt/soteria`, `/usr/local/rustup`, `/usr/local/cargo` are made world-writable
 (`chmod -R a+rwX`). This is **load-bearing, not just convenience**: the plugin
 crates are pre-built during `setup` (each as its own crate under
-`/opt/soteria/<v>/plugins/<name>/` with its own `Cargo.lock` + `target/`), but
+`/opt/soteria/soteria-release/plugins/<name>/` with its own `Cargo.lock` + `target/`), but
 soteria-rust may still touch/rebuild them at run time, so the install dir
 cannot be read-only. Users needing host-UID ownership can override with
 `docker run --user $(id -u):$(id -g)`.
@@ -268,4 +284,4 @@ GitHub release (tag `nightly`) is produced by its `.github/workflows/nightly.yml
 - Runs daily at 02:00 UTC; skips if no new commits since last nightly
 - Calls the reusable `build.yml` which: sets up OCaml/opam, builds with Dune, installs Obol and Charon at pinned commits, runs `make package-soteria-rust`
 - The package is created by `packaging/soteria-rust/package.ml` (collecting shared-lib dependencies — `otool -L` on macOS, with a Linux dylib manifest checked by `packaging/soteria-rust/dune`), then assembles `packages/soteria-rust/{bin,lib,plugins}/`
-- Built on both macOS-ARM64 and Linux-x86_64 runners, zipped as `soteria-rust-macos-arm64.zip` and `soteria-rust-linux-x86_64.zip`, and uploaded as prerelease assets — these are the exact names `cargo-soteria`'s `expected_asset_name()` downloads
+- Built on both macOS-ARM64 and Linux-x86_64 runners, zipped as `soteria-rust-macos-arm64.zip` and `soteria-rust-linux-x86_64.zip`, and uploaded as prerelease assets — `cargo-soteria`'s `find_platform_asset()` matches these by `soteria-rust-` prefix + platform suffix. Versioned releases embed the version (`soteria-rust-v0.1.0-macos-arm64.zip`), which the same matcher handles

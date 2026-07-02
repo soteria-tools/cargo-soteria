@@ -25,10 +25,12 @@ COMMANDS
            the available CPUs. Press Ctrl-C to stop; all running analyses are
            killed.
 
-       setup [--local PATH]
-           Download and install the Soteria toolchain into ~/.soteria. With
-           --local, install from an in-progress Soteria build instead of the
-           nightly release.
+       setup [--release RELEASE] [--local PATH] [--yes]
+           Download and install the Soteria toolchain into ~/.soteria. Without
+           --release, installs the latest supported stable release; pass
+           --release nightly or --release X.Y.Z to choose another (installing
+           an unsupported one warns and asks to confirm, or use --yes to skip).
+           With --local, install from an in-progress Soteria build instead.
 
        unsetup
            Remove the installed toolchain.
@@ -81,7 +83,7 @@ Symbolic execution for Rust, powered by Soteria.
 
 {usage}
     cargo soteria [OPTIONS]               Discover & analyse the crate's tests in parallel
-    cargo soteria setup [--local PATH]    Download & install the Soteria toolchain
+    cargo soteria setup [--release REL]   Download & install the Soteria toolchain
     cargo soteria unsetup                 Remove the installed toolchain (asks first)
     cargo soteria nextest run [ARGS]      Run the symbolic tests under cargo-nextest
 

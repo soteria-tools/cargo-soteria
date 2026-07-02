@@ -10,11 +10,12 @@ A Cargo subcommand for running [Soteria](https://github.com/soteria-tools/soteri
 
 ```bash
 cargo install soteria
-cargo soteria setup # Installs binaries
-# Run the setup command again to install the latest nightly release any time.
+cargo soteria setup # Installs the latest supported release
+# Re-run setup any time to update. Use `--release nightly` for the rolling
+# nightly build, or `--release 0.3.5` to pin a specific version.
 ```
 
-The setup installs the latest nightly release (~27MB compressed, ~85MB uncompressed) with all necessary tools.
+The setup installs the latest supported release (~27MB compressed, ~85MB uncompressed) with all necessary tools. Installing the nightly or a version outside the supported range prints a warning and asks to confirm — pass `--yes` to skip the prompt (e.g. in CI).
 
 ## Uninstallation
 
@@ -25,7 +26,7 @@ cargo soteria unsetup
 cargo uninstall soteria
 ```
 
-`cargo soteria unsetup` will show you what will be removed (location, total size, and installed versions) and ask for confirmation before deleting anything.
+`cargo soteria unsetup` will show you what will be removed (location, total size, and the installed release) and ask for confirmation before deleting anything.
 
 ## Usage
 

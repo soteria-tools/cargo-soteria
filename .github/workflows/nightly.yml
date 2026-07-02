@@ -2,9 +2,10 @@ name: Nightly image
 
 # Rebuilds the Docker image daily and republishes ghcr.io/<repo>:nightly.
 #
-# The image bakes in `cargo-soteria setup`, which downloads that day's
-# soteria-rust bundle from the soteria nightly GitHub release (published at
-# 02:00 UTC). We run at 03:00 UTC so the fresh bundle is available.
+# The image bakes in `cargo-soteria setup --release nightly --yes`, which
+# downloads that day's soteria-rust bundle from the soteria nightly GitHub
+# release (published at 02:00 UTC). We run at 03:00 UTC so the fresh bundle is
+# available.
 #
 # `:nightly` is a moving tag (repointed every run). Each run also publishes an
 # immutable `:YYYY-MM-DD` tag so a regression can be pinned/rolled back to.

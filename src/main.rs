@@ -44,13 +44,20 @@ struct RunArgs {
     rest: Vec<String>,
 }
 
-/// `cargo soteria setup [--local PATH]`.
+/// `cargo soteria setup [--release RELEASE] [--local PATH] [--yes]`.
 #[derive(Parser)]
 #[command(name = "cargo-soteria setup", disable_help_flag = true)]
 struct SetupArgs {
-    /// Install from an in-progress local soteria build instead of the nightly.
-    #[arg(long, value_name = "PATH")]
+    /// Install from an in-progress local soteria build instead of a release.
+    #[arg(long, value_name = "PATH", conflicts_with = "release")]
     local: Option<String>,
+    /// Release to install: `nightly`, or a version like `0.3.5`.
+    /// Defaults to the latest patch of the highest supported release.
+    #[arg(long, value_name = "RELEASE")]
+    release: Option<String>,
+    /// Skip confirmation prompts (e.g. when installing an unsupported release).
+    #[arg(short = 'y', long = "yes")]
+    yes: bool,
 }
 
 /// Parse `args` as `T`, supplying `bin` as argv[0] (clap expects the program
@@ -93,7 +100,7 @@ fn main() {
     match args.first().map(|s| s.as_str()) {
         Some("setup") => {
             let a: SetupArgs = parse_args("cargo soteria setup", &args[1..]);
-            setup::cmd_setup(a.local.as_deref());
+            setup::cmd_setup(a.local.as_deref(), a.release.as_deref(), a.yes);
         }
         Some("unsetup") => setup::cmd_unsetup(),
         // Default path: discover the crate's tests and analyse them in parallel.
@@ -166,5 +173,39 @@ mod tests {
         assert_eq!(none.local, None);
         let some: SetupArgs = parse_args("cargo soteria setup", &["--local".into(), "/p".into()]);
         assert_eq!(some.local.as_deref(), Some("/p"));
+    }
+
+    #[test]
+    fn setup_release_and_yes_parse() {
+        let none: SetupArgs = parse_args("cargo soteria setup", &[]);
+        assert_eq!(none.release, None);
+        assert!(!none.yes);
+
+        let a: SetupArgs = parse_args(
+            "cargo soteria setup",
+            &["--release".into(), "0.3.5".into(), "-y".into()],
+        );
+        assert_eq!(a.release.as_deref(), Some("0.3.5"));
+        assert!(a.yes);
+
+        let nightly: SetupArgs = parse_args(
+            "cargo soteria setup",
+            &["--release".into(), "nightly".into()],
+        );
+        assert_eq!(nightly.release.as_deref(), Some("nightly"));
+        assert!(!nightly.yes);
+    }
+
+    #[test]
+    fn setup_release_conflicts_with_local() {
+        // `--release` and `--local` are mutually exclusive.
+        let res = SetupArgs::try_parse_from([
+            "cargo soteria setup",
+            "--release",
+            "0.3.5",
+            "--local",
+            "/p",
+        ]);
+        assert!(res.is_err());
     }
 }
