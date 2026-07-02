@@ -65,7 +65,7 @@ fn run_analysis(soteria_home: &PathBuf) {
 #[test]
 fn online_install_and_run() {
     let home = fresh_soteria_home();
-    run_setup(&[], &home);
+    run_setup(&["--release", "nightly", "--yes"], &home);
     run_analysis(&home);
     fs::remove_dir_all(&home).ok();
 }
@@ -140,7 +140,7 @@ fn nextest_online_install_and_run() {
         return;
     }
     let home = fresh_soteria_home();
-    run_setup(&[], &home);
+    run_setup(&["--release", "nightly", "--yes"], &home);
 
     let crate_dir = copy_fixture_to_temp("simple-crate");
     let out = Command::new(cargo_soteria_bin())
@@ -186,9 +186,10 @@ fn nextest_online_install_and_run() {
 // into a temp SOTERIA_HOME so we can drive every outcome — pass, fail, crash,
 // and a slow test we interrupt — without the real analyzer.
 
-/// Install the fake soteria-rust at `$SOTERIA_HOME/<version>/bin/soteria-rust`.
+/// Install the fake soteria-rust at `$SOTERIA_HOME/soteria-release/bin/soteria-rust`.
 fn install_fake_soteria(home: &Path) {
-    let bin_dir = home.join(env!("CARGO_PKG_VERSION")).join("bin");
+    // Mirrors `common::RELEASE_DIR` (not importable from the bin crate).
+    let bin_dir = home.join("soteria-release").join("bin");
     fs::create_dir_all(&bin_dir).expect("create fake bin dir");
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-soteria-rust.sh");
     let dst = bin_dir.join("soteria-rust");

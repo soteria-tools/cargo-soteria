@@ -1,6 +1,6 @@
 //! Cross-cutting helpers shared across the binary: the install-path resolution,
 //! the terminal UI primitives (spinners, the download bar, the `✓`/`·`/`!`/`✗`
-//! status lines), and the crate version that names the install directory.
+//! status lines), and this crate's own version (shown in the offline help).
 
 use std::env;
 use std::path::PathBuf;
@@ -10,8 +10,14 @@ use std::time::Duration;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 
-/// Version of this crate, used as the install subdirectory under ~/.soteria/.
+/// Version of this crate. Shown in the offline `--help` banner (it no longer
+/// names the install directory — see [`package_dir`]).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Name of the single directory the installed soteria-rust toolchain lives in.
+/// A fixed name (rather than a per-version folder) keeps only one copy on disk;
+/// the actual release installed is recorded in the `VERSION` file inside it.
+pub const RELEASE_DIR: &str = "soteria-release";
 
 // ── path helpers ──────────────────────────────────────────────────────────────
 
@@ -24,9 +30,10 @@ pub fn soteria_base_dir() -> PathBuf {
     PathBuf::from(home).join(".soteria")
 }
 
-/// The install directory for the version this binary manages: `<base>/<VERSION>`.
+/// The install directory for the toolchain this binary manages:
+/// `<base>/soteria-release`. A fixed folder that is overwritten on each install.
 pub fn package_dir() -> PathBuf {
-    soteria_base_dir().join(VERSION)
+    soteria_base_dir().join(RELEASE_DIR)
 }
 
 // ── subprocesses ──────────────────────────────────────────────────────────────

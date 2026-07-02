@@ -7,13 +7,15 @@ and extend it.
 
 ## How it works
 
-1. **`cargo soteria setup`** downloads the `soteria-rust` nightly bundle for your
-   platform from the [soteria](https://github.com/soteria-tools/soteria) GitHub
-   releases (tag `nightly`) and extracts it to `~/.soteria/<version>/`
-   (`bin/`, `lib/`, `plugins/`). It then verifies the Rust toolchain and
-   pre-builds the analyzer plugins so the first real run is fast.
-   `~/.soteria/<version>/version.json` records the release id for update
-   detection. (`SOTERIA_HOME` overrides the install base.)
+1. **`cargo soteria setup`** downloads a `soteria-rust` bundle for your platform
+   from the [soteria](https://github.com/soteria-tools/soteria) GitHub releases
+   and extracts it to `~/.soteria/soteria-release/` (`bin/`, `lib/`, `plugins/`).
+   Without a flag it installs the latest supported stable release; `--release
+   nightly` or `--release X.Y.Z` picks another (installing an unsupported one
+   warns and asks to confirm, or pass `--yes`). It then verifies the Rust
+   toolchain and pre-builds the analyzer plugins so the first real run is fast.
+   `version.json` records the release id for update detection and `VERSION` the
+   human-readable name. (`SOTERIA_HOME` overrides the install base.)
 
 2. **`cargo soteria [args]`** runs the crate's symbolic tests in parallel
    (`src/run.rs`):
@@ -37,9 +39,9 @@ Before invoking `soteria-rust`, the wrapper sets:
 
 | Variable | Value |
 |---|---|
-| `DYLD_LIBRARY_PATH` (macOS) / `LD_LIBRARY_PATH` (Linux) | `~/.soteria/<version>/lib/` |
+| `DYLD_LIBRARY_PATH` (macOS) / `LD_LIBRARY_PATH` (Linux) | `~/.soteria/soteria-release/lib/` |
 | `SOTERIA_Z3_PATH`, `SOTERIA_OBOL_PATH`, `SOTERIA_CHARON_PATH` | paths under `bin/` |
-| `SOTERIA_RUST_PLUGINS` | `~/.soteria/<version>/plugins/` |
+| `SOTERIA_RUST_PLUGINS` | `~/.soteria/soteria-release/plugins/` |
 
 ## Project structure
 
@@ -105,7 +107,7 @@ of downloading from GitHub — useful for testing in-progress soteria changes.
 
 1. Build the soteria package on the target platform (via CI, or
    `make package-soteria-rust` in a soteria checkout).
-2. Add the platform to `expected_asset_name()` in `src/main.rs` and to the
+2. Add the platform to `platform_asset_suffix()` in `src/setup.rs` and to the
    supported-target check in `build.rs`.
 3. Add the target triple to `supported-platforms` in `Cargo.toml`.
 

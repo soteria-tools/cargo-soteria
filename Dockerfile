@@ -53,9 +53,9 @@ COPY --from=builder /usr/local/cargo/bin/cargo-soteria /usr/local/bin/cargo-sote
 RUN --mount=type=secret,id=github_token,required=false \
     TOKEN=$(cat /run/secrets/github_token 2>/dev/null || true) && \
     if [ -n "$TOKEN" ]; then \
-    GITHUB_TOKEN="$TOKEN" cargo-soteria setup; \
+    GITHUB_TOKEN="$TOKEN" cargo-soteria setup --release nightly --yes; \
     else \
-    cargo-soteria setup; \
+    cargo-soteria setup --release nightly --yes; \
     fi && \
     NIGHTLY="$(rustup toolchain list | sed 's/ (.*)//' | grep '^nightly' | head -n1)" && \
     rustup default "$NIGHTLY" && \
